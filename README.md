@@ -66,7 +66,7 @@ jobs:
 | `k8s_namespace` | Yes | — | Kubernetes namespace |
 | `build_command` | No | `mvn clean package -DskipTests -B` | Build command |
 | `skip_build` | No | `false` | Skip build (config-only services) |
-| `build_method` | No | `docker` | `docker` (DinD sidecar) or `kaniko` (daemonless) |
+| `skip_deploy` | No | `false` | Skip deploy (build-only) |
 | `registry_org` | Yes | — | Docker registry org/namespace |
 | `vault_addr` | Yes | — | HashiCorp Vault URL |
 | `helm_chart` | Yes | — | OCI Helm chart reference |
@@ -76,36 +76,23 @@ jobs:
 | `health_check_port` | No | `8080` | Container port |
 | `runs_on` | No | `k8s-runner` | GitHub Actions runner label |
 
-## Build Methods
-
-### Docker (default)
-Uses Docker-in-Docker sidecar. Requires a DinD container alongside the runner. Faster builds with standard Docker caching.
-
-```yaml
-build_method: docker
-```
-
-### Kaniko
-Daemonless builds — no Docker daemon required. Works in rootless/restricted environments. Supports layer caching via registry.
-
-```yaml
-build_method: kaniko
-```
-
 ## Pipeline
 
 ```
-Checkout → Version → Build → Vault → Container Build → Release → Deploy → Verify
+┌─────────────────────────────────────────────┐     ┌──────────────────────────────────┐
+│  BUILD JOB                                  │     │  DEPLOY JOB                      │
+│  Checkout → Version → Compile → Docker Push │ ──► │  Vault → Helm Upgrade → Verify   │
+│  → GitHub Release                           │     │  → Health Check                  │
+└─────────────────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
-| Stage | Action | Description |
-|-------|--------|-------------|
-| **Version** | `actions/semantic-version` | Semver from git tags + conventional commits |
-| **Build** | inline | Maven/npm with dependency caching |
-| **Vault** | `hashicorp/vault-action` | Docker Hub credentials via JWT/OIDC |
-| **Container** | `actions/docker-build` or `actions/kaniko-build` | Build & push container image |
-| **Release** | `actions/github-release` | Git tag + changelog + GitHub Release |
-| **Deploy** | `actions/helm-deploy` | Helm upgrade + rollout verify + health check |
+| Stage | Job | Description |
+|-------|-----|-------------|
+| **Version** | build | Semver from git tags + conventional commits |
+| **Compile** | build | Maven/npm with dependency caching |
+| **Docker** | build | Build & push container image (DinD) |
+| **Release** | build | Git tag + changelog + GitHub Release |
+| **Deploy** | deploy | Helm upgrade + rollout verify + health check |
 
 ## Composite Actions
 

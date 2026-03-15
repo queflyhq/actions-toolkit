@@ -13,6 +13,18 @@ on:
       k8s_namespace:
         required: true
         type: string
+      registry_org:
+        required: true
+        type: string
+      vault_addr:
+        required: true
+        type: string
+      helm_chart:
+        required: true
+        type: string
+      helm_chart_version:
+        required: true
+        type: string
 
       # ── Build ──
       build_command:
@@ -24,21 +36,7 @@ on:
         type: boolean
         default: false
 
-      # ── Container Build ──
-      build_method:
-        required: false
-        type: string
-        default: 'docker'       # 'docker' (DinD) or 'kaniko' (daemonless)
-
-      # ── Registry ──
-      registry_org:
-        required: true
-        type: string
-
       # ── Vault ──
-      vault_addr:
-        required: true
-        type: string
       vault_role:
         required: false
         type: string
@@ -56,14 +54,6 @@ on:
         type: string
         default: 'secret/data/dockerhub'
 
-      # ── Helm ──
-      helm_chart:
-        required: true
-        type: string
-      helm_chart_version:
-        required: true
-        type: string
-
       # ── Versioning ──
       version_bump:
         required: false
@@ -80,6 +70,12 @@ on:
         type: string
         default: '8080'
 
+      # ── Deploy ──
+      skip_deploy:
+        required: false
+        type: boolean
+        default: false
+
       # ── Runner ──
       runs_on:
         required: false
@@ -87,18 +83,24 @@ on:
         default: 'k8s-runner'
 
 jobs:
-  build-and-deploy:
+  # ═══════════════════════════════════════
+  # Build → Version → Compile → Image → Release
+  # ═══════════════════════════════════════
+  build:
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: write
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      bump_type: ${{ steps.version.outputs.bump_type }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+      image: ${{ steps.image.outputs.image }}
 
     steps:
-      # ── Setup ──
       - name: Setup environment
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          kubectl cluster-info
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -140,26 +142,29 @@ jobs:
             ${{ inputs.vault_secret_path }} DOCKERHUB_USERNAME | VAULT_DOCKER_USER ;
             ${{ inputs.vault_secret_path }} DOCKERHUB_TOKEN | VAULT_DOCKER_TOKEN
 
-      # ── Container Build & Push ──
-      - name: Build & push image (Docker)
-        if: inputs.build_method == 'docker' || inputs.build_method == ''
-        uses: queflyhq/shared-devops/actions/docker-build@main
-        with:
-          image_name: ${{ inputs.image_name }}
-          image_tag: ${{ steps.version.outputs.version }}
-          registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
-          registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
-          registry_org: ${{ inputs.registry_org }}
+      # ── Docker Build & Push ──
+      - name: Build & push image
+        id: image
+        shell: bash
+        run: |
+          IMAGE="${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}"
+          echo "Building $IMAGE ..."
 
-      - name: Build & push image (Kaniko)
-        if: inputs.build_method == 'kaniko'
-        uses: queflyhq/shared-devops/actions/kaniko-build@main
-        with:
-          image_name: ${{ inputs.image_name }}
-          image_tag: ${{ steps.version.outputs.version }}
-          registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
-          registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
-          registry_org: ${{ inputs.registry_org }}
+          for i in $(seq 1 30); do
+            if docker info >/dev/null 2>&1; then
+              echo "Docker daemon ready"
+              break
+            fi
+            echo "Waiting for Docker daemon... ($i/30)"
+            sleep 2
+          done
+
+          echo "${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}" | docker login -u "${{ steps.vault.outputs.VAULT_DOCKER_USER }}" --password-stdin
+
+          docker build -t $IMAGE -f ./Dockerfile .
+          docker push $IMAGE
+
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       # ── Release ──
       - name: Create release
@@ -174,6 +179,55 @@ jobs:
           k8s_namespace: ${{ inputs.k8s_namespace }}
           helm_release_name: ${{ inputs.helm_release_name }}
 
+      # ── Summary ──
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ inputs.image_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ steps.version.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bump Type | ${{ steps.version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ steps.image.outputs.image }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ═══════════════════════════════════════
+  # Deploy → Helm upgrade → Verify → Health check
+  # ═══════════════════════════════════════
+  deploy:
+    needs: build
+    if: ${{ !inputs.skip_deploy }}
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Setup environment
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          kubectl cluster-info
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Vault ──
+      - name: Get credentials from Vault
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ inputs.vault_addr }}
+          method: jwt
+          path: ${{ inputs.vault_auth_path }}
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ inputs.vault_github_audience }}
+          secrets: |
+            ${{ inputs.vault_secret_path }} DOCKERHUB_USERNAME | VAULT_DOCKER_USER ;
+            ${{ inputs.vault_secret_path }} DOCKERHUB_TOKEN | VAULT_DOCKER_TOKEN
+
       # ── Deploy ──
       - name: Deploy to Kubernetes
         uses: queflyhq/shared-devops/actions/helm-deploy@main
@@ -181,7 +235,7 @@ jobs:
           helm_release_name: ${{ inputs.helm_release_name }}
           k8s_namespace: ${{ inputs.k8s_namespace }}
           image_name: ${{ inputs.image_name }}
-          image_tag: ${{ steps.version.outputs.version }}
+          image_tag: ${{ needs.build.outputs.version }}
           registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
           registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
           registry_org: ${{ inputs.registry_org }}
@@ -191,21 +245,14 @@ jobs:
           health_check_port: ${{ inputs.health_check_port }}
 
       # ── Summary ──
-      - name: Build summary
+      - name: Deploy summary
         if: always()
         run: |
-          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | \`${{ inputs.image_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Version | \`${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag | \`${{ steps.version.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Bump Type | ${{ steps.version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ needs.build.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Namespace | \`${{ inputs.k8s_namespace }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Helm Release | \`${{ inputs.helm_release_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Docker Image" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,329 @@
+name: Build, Release & Deploy
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+      helm_release_name:
+        required: true
+        type: string
+      k8s_namespace:
+        required: true
+        type: string
+      build_command:
+        required: false
+        type: string
+        default: 'mvn clean package -DskipTests -B'
+      skip_build:
+        required: false
+        type: boolean
+        default: false
+      helm_chart_version:
+        required: false
+        type: string
+        default: '1.2.0'
+      version_bump:
+        required: false
+        type: string
+        default: ''
+      health_check_path:
+        required: false
+        type: string
+        default: ''
+      health_check_port:
+        required: false
+        type: string
+        default: '8080'
+
+env:
+  DOCKERHUB_USERNAME: queflyhq
+  VAULT_ADDR: https://vault.ayush.live
+  VAULT_AUTH_PATH: jwt
+  VAULT_ROLE: github-actions
+
+jobs:
+  build-and-deploy:
+    runs-on: k8s-runner
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Setup environment
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          kubectl cluster-info
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      # =========================================================================
+      # Auto Semantic Versioning
+      # =========================================================================
+      - name: Calculate next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+            echo "No existing tags found, starting from v0.0.0"
+          fi
+
+          echo "Latest tag: $LATEST_TAG"
+
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+
+          BUMP_TYPE="${{ inputs.version_bump }}"
+
+          if [ -z "$BUMP_TYPE" ]; then
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -qiE "^(breaking|major):|BREAKING CHANGE"; then
+              BUMP_TYPE="major"
+            elif echo "$COMMIT_MSG" | grep -qiE "^(feat|feature):"; then
+              BUMP_TYPE="minor"
+            else
+              BUMP_TYPE="patch"
+            fi
+          fi
+
+          echo "Bump type: $BUMP_TYPE"
+
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch|*)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="v${NEW_VERSION}"
+
+          echo "New version: $NEW_VERSION"
+          echo "New tag: $NEW_TAG"
+
+          if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+            echo "Tag $NEW_TAG already exists!"
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            NEW_VERSION="${NEW_VERSION}-${TIMESTAMP}"
+            NEW_TAG="v${NEW_VERSION}"
+            echo "Using timestamped version: $NEW_VERSION"
+          fi
+
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "previous_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      # =========================================================================
+      # Build (Maven / npm / etc.)
+      # =========================================================================
+      - name: Cache Maven dependencies
+        if: ${{ !inputs.skip_build }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Build application
+        if: ${{ !inputs.skip_build }}
+        run: ${{ inputs.build_command }}
+
+      # =========================================================================
+      # Vault Authentication
+      # =========================================================================
+      - name: Get Docker Hub Credentials from Vault
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: ${{ env.VAULT_AUTH_PATH }}
+          role: ${{ env.VAULT_ROLE }}
+          jwtGithubAudience: https://github.com/AyushHealthcare
+          secrets: |
+            secret/data/dockerhub DOCKERHUB_USERNAME | VAULT_DOCKER_USER ;
+            secret/data/dockerhub DOCKERHUB_TOKEN | VAULT_DOCKER_TOKEN
+
+      # =========================================================================
+      # Build & Push Docker Image (Kaniko)
+      # =========================================================================
+      - name: Setup Docker credentials for Kaniko
+        run: |
+          AUTH=$(echo -n "${{ steps.vault.outputs.VAULT_DOCKER_USER }}:${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}" | base64 -w0)
+          CONFIG="{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}"
+          mkdir -p /kaniko/.docker /tmp/.docker
+          echo "$CONFIG" > /kaniko/.docker/config.json
+          echo "$CONFIG" > /tmp/.docker/config.json
+
+      - name: Build and Push Docker image
+        env:
+          DOCKER_CONFIG: /kaniko/.docker
+        run: |
+          mkdir -p /tmp/kaniko
+          /kaniko/executor \
+            --context=$GITHUB_WORKSPACE \
+            --dockerfile=$GITHUB_WORKSPACE/Dockerfile \
+            --destination=${{ env.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }} \
+            --kaniko-dir=/tmp/kaniko \
+            --cache=true \
+            --cache-repo=${{ env.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}-cache
+
+      # =========================================================================
+      # Git Tag & GitHub Release
+      # =========================================================================
+      - name: Create Git Tag
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          PREV_TAG="${{ steps.version.outputs.previous_tag }}"
+
+          if [ "$PREV_TAG" = "v0.0.0" ]; then
+            CHANGELOG="Initial release"
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | head -50)
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Release ${{ steps.version.outputs.version }}
+
+            **Version Bump:** ${{ steps.version.outputs.bump_type }}
+            **Previous Version:** ${{ steps.version.outputs.previous_tag }}
+
+            ### Docker Image
+            ```
+            ${{ env.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}
+            ```
+
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Deployment
+            Automatically deployed to Kubernetes.
+
+            | Property | Value |
+            |----------|-------|
+            | Namespace | `${{ inputs.k8s_namespace }}` |
+            | Helm Release | `${{ inputs.helm_release_name }}` |
+            | Commit | `${{ github.sha }}` |
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # =========================================================================
+      # Deploy to Kubernetes
+      # =========================================================================
+      - name: Create ImagePullSecret
+        run: |
+          kubectl create namespace ${{ inputs.k8s_namespace }} 2>/dev/null || true
+
+          kubectl delete secret dockerhub-credentials -n ${{ inputs.k8s_namespace }} 2>/dev/null || true
+
+          kubectl create secret docker-registry dockerhub-credentials \
+            --namespace ${{ inputs.k8s_namespace }} \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username=${{ steps.vault.outputs.VAULT_DOCKER_USER }} \
+            --docker-password=${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          echo "Deploying ${{ inputs.image_name }}:${{ steps.version.outputs.version }}..."
+
+          echo "${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ steps.vault.outputs.VAULT_DOCKER_USER }} --password-stdin
+
+          helm upgrade --install ${{ inputs.helm_release_name }} \
+            oci://registry-1.docker.io/queflyhq/ayush-service --version ${{ inputs.helm_chart_version }} \
+            --namespace ${{ inputs.k8s_namespace }} \
+            -f ./helm/values.yaml \
+            --set image.tag=${{ steps.version.outputs.version }} \
+            --set image.repository=${{ env.DOCKERHUB_USERNAME }}/${{ inputs.image_name }} \
+            --wait \
+            --timeout 10m
+
+      - name: Verify Deployment
+        run: |
+          kubectl rollout status deployment/${{ inputs.helm_release_name }} -n ${{ inputs.k8s_namespace }} --timeout=300s
+
+      - name: Health Check
+        if: ${{ inputs.health_check_path != '' }}
+        continue-on-error: true
+        run: |
+          sleep 30
+
+          POD_NAME=$(kubectl get pods -n ${{ inputs.k8s_namespace }} -l app.kubernetes.io/name=${{ inputs.helm_release_name }} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          if [ -z "$POD_NAME" ]; then
+            echo "No pod found, skipping health check"
+            exit 0
+          fi
+
+          LOCAL_PORT=$((RANDOM % 1000 + 9000))
+          kubectl port-forward -n ${{ inputs.k8s_namespace }} $POD_NAME ${LOCAL_PORT}:${{ inputs.health_check_port }} &
+          PF_PID=$!
+          sleep 5
+
+          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${LOCAL_PORT}${{ inputs.health_check_path }} || echo "000")
+
+          kill $PF_PID 2>/dev/null || true
+
+          echo "Health check: $HEALTH_STATUS"
+
+      # =========================================================================
+      # Summary
+      # =========================================================================
+      - name: Generate Build Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ inputs.image_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ steps.version.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bump Type | ${{ steps.version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Previous | \`${{ steps.version.outputs.previous_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Namespace | \`${{ inputs.k8s_namespace }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

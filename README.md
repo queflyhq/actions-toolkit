@@ -8,7 +8,7 @@ Shared reusable workflows, composite actions, and runner infrastructure for all 
 shared-devops/
 │
 ├── .github/workflows/
-│   └── build-deploy.yml                # Orchestrator workflow (calls actions below)
+│   └── shared.yml                # Orchestrator workflow (calls actions below)
 │
 ├── actions/
 │   ├── semantic-version/action.yml     # Auto version from git tags + commit messages
@@ -43,7 +43,7 @@ on:
 
 jobs:
   deploy:
-    uses: queflyhq/shared-devops/.github/workflows/build-deploy.yml@main
+    uses: queflyhq/shared-devops/.github/workflows/shared.yml@main
     with:
       image_name: ayush-<service>-service
       helm_release_name: ayush-<service>

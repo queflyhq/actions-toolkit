@@ -146,7 +146,7 @@ jobs:
 
       # ── Container Build & Push ──
       - name: Build & push image (Docker)
-        if: ${{ inputs.build_method == 'docker' }}
+        if: inputs.build_method == 'docker' || inputs.build_method == ''
         uses: queflyhq/shared-devops/actions/docker-build@main
         with:
           image_name: ${{ inputs.image_name }}
@@ -156,7 +156,7 @@ jobs:
           registry_org: ${{ inputs.registry_org }}
 
       - name: Build & push image (Kaniko)
-        if: ${{ inputs.build_method == 'kaniko' }}
+        if: inputs.build_method == 'kaniko'
         uses: queflyhq/shared-devops/actions/kaniko-build@main
         with:
           image_name: ${{ inputs.image_name }}

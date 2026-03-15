@@ -3,6 +3,7 @@ name: Build, Release & Deploy
 on:
   workflow_call:
     inputs:
+      # ── Required ──
       image_name:
         required: true
         type: string
@@ -12,6 +13,8 @@ on:
       k8s_namespace:
         required: true
         type: string
+
+      # ── Build ──
       build_command:
         required: false
         type: string
@@ -20,14 +23,58 @@ on:
         required: false
         type: boolean
         default: false
+
+      # ── Container Build ──
+      build_method:
+        required: false
+        type: string
+        default: 'docker'       # 'docker' (DinD) or 'kaniko' (daemonless)
+
+      # ── Registry ──
+      registry_org:
+        required: false
+        type: string
+        default: 'queflyhq'
+
+      # ── Vault ──
+      vault_addr:
+        required: false
+        type: string
+        default: 'https://vault.ayush.live'
+      vault_role:
+        required: false
+        type: string
+        default: 'github-actions'
+      vault_auth_path:
+        required: false
+        type: string
+        default: 'jwt'
+      vault_github_audience:
+        required: false
+        type: string
+        default: 'https://github.com/AyushHealthcare'
+      vault_secret_path:
+        required: false
+        type: string
+        default: 'secret/data/dockerhub'
+
+      # ── Helm ──
+      helm_chart:
+        required: false
+        type: string
+        default: 'oci://registry-1.docker.io/queflyhq/ayush-service'
       helm_chart_version:
         required: false
         type: string
         default: '1.2.0'
+
+      # ── Versioning ──
       version_bump:
         required: false
         type: string
         default: ''
+
+      # ── Health Check ──
       health_check_path:
         required: false
         type: string
@@ -37,15 +84,15 @@ on:
         type: string
         default: '8080'
 
-env:
-  DOCKERHUB_ORG: queflyhq
-  VAULT_ADDR: https://vault.ayush.live
-  VAULT_AUTH_PATH: jwt
-  VAULT_ROLE: github-actions
+      # ── Runner ──
+      runs_on:
+        required: false
+        type: string
+        default: 'k8s-runner'
 
 jobs:
   build-and-deploy:
-    runs-on: k8s-runner
+    runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: write
       id-token: write
@@ -88,26 +135,35 @@ jobs:
         id: vault
         uses: hashicorp/vault-action@v3
         with:
-          url: ${{ env.VAULT_ADDR }}
+          url: ${{ inputs.vault_addr }}
           method: jwt
-          path: ${{ env.VAULT_AUTH_PATH }}
-          role: ${{ env.VAULT_ROLE }}
-          jwtGithubAudience: https://github.com/AyushHealthcare
+          path: ${{ inputs.vault_auth_path }}
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ inputs.vault_github_audience }}
           secrets: |
-            secret/data/dockerhub DOCKERHUB_USERNAME | VAULT_DOCKER_USER ;
-            secret/data/dockerhub DOCKERHUB_TOKEN | VAULT_DOCKER_TOKEN
+            ${{ inputs.vault_secret_path }} DOCKERHUB_USERNAME | VAULT_DOCKER_USER ;
+            ${{ inputs.vault_secret_path }} DOCKERHUB_TOKEN | VAULT_DOCKER_TOKEN
 
-      # ── Docker Build & Push ──
-      - name: Build & push image
+      # ── Container Build & Push ──
+      - name: Build & push image (Docker)
+        if: ${{ inputs.build_method == 'docker' }}
+        uses: queflyhq/shared-devops/actions/docker-build@main
+        with:
+          image_name: ${{ inputs.image_name }}
+          image_tag: ${{ steps.version.outputs.version }}
+          registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
+          registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
+          registry_org: ${{ inputs.registry_org }}
+
+      - name: Build & push image (Kaniko)
+        if: ${{ inputs.build_method == 'kaniko' }}
         uses: queflyhq/shared-devops/actions/kaniko-build@main
         with:
           image_name: ${{ inputs.image_name }}
           image_tag: ${{ steps.version.outputs.version }}
           registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
           registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
-          registry_org: ${{ env.DOCKERHUB_ORG }}
-          context: ${{ github.workspace }}
-          dockerfile: ${{ github.workspace }}/Dockerfile
+          registry_org: ${{ inputs.registry_org }}
 
       # ── Release ──
       - name: Create release
@@ -118,7 +174,7 @@ jobs:
           bump_type: ${{ steps.version.outputs.bump_type }}
           previous_tag: ${{ steps.version.outputs.previous_tag }}
           image_name: ${{ inputs.image_name }}
-          registry_org: ${{ env.DOCKERHUB_ORG }}
+          registry_org: ${{ inputs.registry_org }}
           k8s_namespace: ${{ inputs.k8s_namespace }}
           helm_release_name: ${{ inputs.helm_release_name }}
 
@@ -132,7 +188,8 @@ jobs:
           image_tag: ${{ steps.version.outputs.version }}
           registry_username: ${{ steps.vault.outputs.VAULT_DOCKER_USER }}
           registry_token: ${{ steps.vault.outputs.VAULT_DOCKER_TOKEN }}
-          registry_org: ${{ env.DOCKERHUB_ORG }}
+          registry_org: ${{ inputs.registry_org }}
+          helm_chart: ${{ inputs.helm_chart }}
           helm_chart_version: ${{ inputs.helm_chart_version }}
           health_check_path: ${{ inputs.health_check_path }}
           health_check_port: ${{ inputs.health_check_port }}
@@ -154,5 +211,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Docker Image" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ env.DOCKERHUB_ORG }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

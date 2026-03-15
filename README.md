@@ -12,7 +12,8 @@ shared-devops/
 │
 ├── actions/
 │   ├── semantic-version/action.yml     # Auto version from git tags + commit messages
-│   ├── kaniko-build/action.yml         # Build & push Docker image (no daemon)
+│   ├── docker-build/action.yml         # Build & push Docker image (DinD)
+│   ├── kaniko-build/action.yml         # Build & push Docker image (daemonless)
 │   ├── github-release/action.yml       # Git tag + changelog + GitHub Release
 │   └── helm-deploy/action.yml          # Deploy to Kubernetes via Helm OCI chart
 │
@@ -61,15 +62,35 @@ jobs:
 | `k8s_namespace` | Yes | — | Kubernetes namespace |
 | `build_command` | No | `mvn clean package -DskipTests -B` | Build command |
 | `skip_build` | No | `false` | Skip build (config-only services) |
+| `build_method` | No | `docker` | `docker` (DinD sidecar) or `kaniko` (daemonless) |
+| `registry_org` | No | `queflyhq` | Docker registry org/namespace |
+| `helm_chart` | No | `oci://...queflyhq/ayush-service` | OCI Helm chart reference |
 | `helm_chart_version` | No | `1.2.0` | Shared OCI Helm chart version |
 | `version_bump` | No | auto-detect | `patch` / `minor` / `major` |
 | `health_check_path` | No | — | Health endpoint (e.g. `/actuator/health`) |
 | `health_check_port` | No | `8080` | Container port |
+| `runs_on` | No | `k8s-runner` | GitHub Actions runner label |
+
+## Build Methods
+
+### Docker (default)
+Uses Docker-in-Docker sidecar. Requires a DinD container alongside the runner. Faster builds with standard Docker caching.
+
+```yaml
+build_method: docker
+```
+
+### Kaniko
+Daemonless builds — no Docker daemon required. Works in rootless/restricted environments. Supports layer caching via registry.
+
+```yaml
+build_method: kaniko
+```
 
 ## Pipeline
 
 ```
-Checkout → Version → Build → Vault → Kaniko → Release → Deploy → Verify
+Checkout → Version → Build → Vault → Container Build → Release → Deploy → Verify
 ```
 
 | Stage | Action | Description |
@@ -77,7 +98,7 @@ Checkout → Version → Build → Vault → Kaniko → Release → Deploy → V
 | **Version** | `actions/semantic-version` | Semver from git tags + conventional commits |
 | **Build** | inline | Maven/npm with dependency caching |
 | **Vault** | `hashicorp/vault-action` | Docker Hub credentials via JWT/OIDC |
-| **Kaniko** | `actions/kaniko-build` | Build & push container image |
+| **Container** | `actions/docker-build` or `actions/kaniko-build` | Build & push container image |
 | **Release** | `actions/github-release` | Git tag + changelog + GitHub Release |
 | **Deploy** | `actions/helm-deploy` | Helm upgrade + rollout verify + health check |
 
@@ -87,6 +108,7 @@ Each action can also be used independently in custom workflows:
 
 ```yaml
 - uses: queflyhq/shared-devops/actions/semantic-version@main
+- uses: queflyhq/shared-devops/actions/docker-build@main
 - uses: queflyhq/shared-devops/actions/kaniko-build@main
 - uses: queflyhq/shared-devops/actions/github-release@main
 - uses: queflyhq/shared-devops/actions/helm-deploy@main

@@ -32,15 +32,13 @@ on:
 
       # ── Registry ──
       registry_org:
-        required: false
+        required: true
         type: string
-        default: 'queflyhq'
 
       # ── Vault ──
       vault_addr:
-        required: false
+        required: true
         type: string
-        default: 'https://vault.ayush.live'
       vault_role:
         required: false
         type: string
@@ -52,7 +50,7 @@ on:
       vault_github_audience:
         required: false
         type: string
-        default: 'https://github.com/AyushHealthcare'
+        default: ''
       vault_secret_path:
         required: false
         type: string
@@ -60,13 +58,11 @@ on:
 
       # ── Helm ──
       helm_chart:
-        required: false
+        required: true
         type: string
-        default: 'oci://registry-1.docker.io/queflyhq/ayush-service'
       helm_chart_version:
-        required: false
+        required: true
         type: string
-        default: '1.2.0'
 
       # ── Versioning ──
       version_bump:

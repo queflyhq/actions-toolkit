@@ -45,9 +45,13 @@ jobs:
   deploy:
     uses: queflyhq/shared-devops/.github/workflows/build-and-deploy.yml@main
     with:
-      image_name: ayush-<service>-service
-      helm_release_name: ayush-<service>
-      k8s_namespace: ayush-<service>-service
+      image_name: my-service
+      helm_release_name: my-service
+      k8s_namespace: my-service
+      registry_org: my-dockerhub-org
+      vault_addr: https://vault.example.com
+      helm_chart: oci://registry-1.docker.io/my-org/my-chart
+      helm_chart_version: '1.0.0'
     permissions:
       contents: write
       id-token: write
@@ -63,9 +67,10 @@ jobs:
 | `build_command` | No | `mvn clean package -DskipTests -B` | Build command |
 | `skip_build` | No | `false` | Skip build (config-only services) |
 | `build_method` | No | `docker` | `docker` (DinD sidecar) or `kaniko` (daemonless) |
-| `registry_org` | No | `queflyhq` | Docker registry org/namespace |
-| `helm_chart` | No | `oci://...queflyhq/ayush-service` | OCI Helm chart reference |
-| `helm_chart_version` | No | `1.2.0` | Shared OCI Helm chart version |
+| `registry_org` | Yes | — | Docker registry org/namespace |
+| `vault_addr` | Yes | — | HashiCorp Vault URL |
+| `helm_chart` | Yes | — | OCI Helm chart reference |
+| `helm_chart_version` | Yes | — | Helm chart version |
 | `version_bump` | No | auto-detect | `patch` / `minor` / `major` |
 | `health_check_path` | No | — | Health endpoint (e.g. `/actuator/health`) |
 | `health_check_port` | No | `8080` | Container port |

@@ -20,8 +20,7 @@ inputs:
     default: 'https://index.docker.io/v1/'
   registry_org:
     description: 'Docker registry org/namespace'
-    required: false
-    default: 'queflyhq'
+    required: true
   dockerfile:
     description: 'Path to Dockerfile'
     required: false

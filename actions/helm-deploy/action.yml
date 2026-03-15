@@ -22,16 +22,13 @@ inputs:
     required: true
   registry_org:
     description: 'Docker registry org/namespace'
-    required: false
-    default: 'queflyhq'
+    required: true
   helm_chart:
     description: 'OCI Helm chart reference'
-    required: false
-    default: 'oci://registry-1.docker.io/queflyhq/ayush-service'
+    required: true
   helm_chart_version:
     description: 'Helm chart version'
-    required: false
-    default: '1.2.0'
+    required: true
   values_file:
     description: 'Path to Helm values file'
     required: false
@@ -82,18 +79,21 @@ runs:
         while [ $WAITED -lt $MAX_WAIT ]; do
           STATUS=$(helm status "$RELEASE" -n "$NS" -o json 2>/dev/null | jq -r '.info.status // empty' 2>/dev/null || echo "")
 
-          if [ "$STATUS" = "pending-install" ] || [ "$STATUS" = "pending-upgrade" ] || [ "$STATUS" = "pending-rollback" ]; then
-            echo "Release '$RELEASE' is in '$STATUS' state. Waiting... (${WAITED}s/${MAX_WAIT}s)"
-            sleep 10
-            WAITED=$((WAITED + 10))
-          else
-            if [ -n "$STATUS" ]; then
-              echo "Release '$RELEASE' is in '$STATUS' state — ready to deploy"
-            else
+          case "$STATUS" in
+            pending-install|pending-upgrade|pending-rollback)
+              echo "Release '$RELEASE' is in '$STATUS' state. Waiting... (${WAITED}s/${MAX_WAIT}s)"
+              sleep 10
+              WAITED=$((WAITED + 10))
+              ;;
+            "")
               echo "No existing release found — fresh install"
-            fi
-            break
-          fi
+              break
+              ;;
+            *)
+              echo "Release '$RELEASE' is in '$STATUS' state — ready to deploy"
+              break
+              ;;
+          esac
         done
 
         if [ $WAITED -ge $MAX_WAIT ]; then

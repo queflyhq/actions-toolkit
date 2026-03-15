@@ -83,7 +83,9 @@ runs:
           --set image.tag=${{ inputs.image_tag }} \
           --set image.repository=${{ inputs.registry_org }}/${{ inputs.image_name }} \
           --wait \
-          --timeout ${{ inputs.timeout }}
+          --timeout ${{ inputs.timeout }} \
+          --cleanup-on-fail \
+          --atomic
 
     - name: Verify rollout
       shell: bash

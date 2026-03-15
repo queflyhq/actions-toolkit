@@ -201,6 +201,7 @@ jobs:
     if: ${{ !inputs.skip_deploy }}
     runs-on: ${{ inputs.runs_on }}
     permissions:
+      contents: read
       id-token: write
 
     steps:

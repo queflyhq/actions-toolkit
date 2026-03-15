@@ -71,6 +71,37 @@ runs:
         echo "${{ inputs.registry_token }}" | helm registry login registry-1.docker.io \
           -u ${{ inputs.registry_username }} --password-stdin
 
+    - name: Wait for existing operations
+      shell: bash
+      run: |
+        RELEASE="${{ inputs.helm_release_name }}"
+        NS="${{ inputs.k8s_namespace }}"
+        MAX_WAIT=300
+        WAITED=0
+
+        while [ $WAITED -lt $MAX_WAIT ]; do
+          STATUS=$(helm status "$RELEASE" -n "$NS" -o json 2>/dev/null | jq -r '.info.status // empty' 2>/dev/null || echo "")
+
+          if [ "$STATUS" = "pending-install" ] || [ "$STATUS" = "pending-upgrade" ] || [ "$STATUS" = "pending-rollback" ]; then
+            echo "Release '$RELEASE' is in '$STATUS' state. Waiting... (${WAITED}s/${MAX_WAIT}s)"
+            sleep 10
+            WAITED=$((WAITED + 10))
+          else
+            if [ -n "$STATUS" ]; then
+              echo "Release '$RELEASE' is in '$STATUS' state — ready to deploy"
+            else
+              echo "No existing release found — fresh install"
+            fi
+            break
+          fi
+        done
+
+        if [ $WAITED -ge $MAX_WAIT ]; then
+          echo "Timed out waiting for pending operation. Force rolling back..."
+          helm rollback "$RELEASE" -n "$NS" 2>/dev/null || true
+          sleep 5
+        fi
+
     - name: Deploy with Helm
       shell: bash
       run: |

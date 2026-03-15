@@ -1,0 +1,77 @@
+name: Kaniko Build & Push
+description: Build and push Docker image using Kaniko (no Docker daemon required)
+
+inputs:
+  image_name:
+    description: 'Docker image name (e.g. ayush-auth-service)'
+    required: true
+  image_tag:
+    description: 'Docker image tag (e.g. 1.2.3)'
+    required: true
+  registry_username:
+    description: 'Docker registry username'
+    required: true
+  registry_token:
+    description: 'Docker registry token/password'
+    required: true
+  registry_url:
+    description: 'Docker registry URL'
+    required: false
+    default: 'https://index.docker.io/v1/'
+  registry_org:
+    description: 'Docker registry org/namespace'
+    required: false
+    default: 'queflyhq'
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: './Dockerfile'
+  context:
+    description: 'Build context path'
+    required: false
+    default: '.'
+  enable_cache:
+    description: 'Enable Kaniko layer caching'
+    required: false
+    default: 'true'
+
+outputs:
+  image:
+    description: 'Full image reference (org/name:tag)'
+    value: ${{ steps.build.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Docker credentials
+      shell: bash
+      run: |
+        AUTH=$(echo -n "${{ inputs.registry_username }}:${{ inputs.registry_token }}" | base64 -w0)
+        CONFIG="{\"auths\":{\"${{ inputs.registry_url }}\":{\"auth\":\"${AUTH}\"}}}"
+        mkdir -p /kaniko/.docker /tmp/.docker
+        echo "$CONFIG" > /kaniko/.docker/config.json
+        echo "$CONFIG" > /tmp/.docker/config.json
+
+    - name: Build and push image
+      id: build
+      shell: bash
+      env:
+        DOCKER_CONFIG: /kaniko/.docker
+      run: |
+        IMAGE="${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+        echo "Building $IMAGE ..."
+
+        CACHE_ARGS=""
+        if [ "${{ inputs.enable_cache }}" = "true" ]; then
+          CACHE_ARGS="--cache=true --cache-repo=${{ inputs.registry_org }}/${{ inputs.image_name }}-cache"
+        fi
+
+        mkdir -p /tmp/kaniko
+        /kaniko/executor \
+          --context=${{ inputs.context }} \
+          --dockerfile=${{ inputs.dockerfile }} \
+          --destination=$IMAGE \
+          --kaniko-dir=/tmp/kaniko \
+          $CACHE_ARGS
+
+        echo "image=$IMAGE" >> $GITHUB_OUTPUT

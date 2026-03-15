@@ -1,0 +1,91 @@
+name: GitHub Release
+description: Create git tag, generate changelog, and publish GitHub Release
+
+inputs:
+  version:
+    description: 'Version number (e.g. 1.2.3)'
+    required: true
+  tag:
+    description: 'Git tag (e.g. v1.2.3)'
+    required: true
+  bump_type:
+    description: 'Version bump type'
+    required: true
+  previous_tag:
+    description: 'Previous git tag for changelog'
+    required: true
+  image_name:
+    description: 'Docker image name (for release notes)'
+    required: true
+  registry_org:
+    description: 'Docker registry org'
+    required: false
+    default: 'queflyhq'
+  k8s_namespace:
+    description: 'Kubernetes namespace (for release notes)'
+    required: false
+    default: ''
+  helm_release_name:
+    description: 'Helm release name (for release notes)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Create git tag
+      continue-on-error: true
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a "${{ inputs.tag }}" -m "Release ${{ inputs.version }}"
+        git push origin "${{ inputs.tag }}"
+
+    - name: Generate changelog
+      id: changelog
+      shell: bash
+      run: |
+        PREV_TAG="${{ inputs.previous_tag }}"
+
+        if [ "$PREV_TAG" = "v0.0.0" ]; then
+          CHANGELOG="Initial release"
+        else
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | head -50)
+        fi
+
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ inputs.tag }}
+        name: Release ${{ inputs.version }}
+        body: |
+          ## Release ${{ inputs.version }}
+
+          **Version Bump:** ${{ inputs.bump_type }}
+          **Previous Version:** ${{ inputs.previous_tag }}
+
+          ### Docker Image
+          ```
+          ${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ inputs.version }}
+          ```
+
+          ### Changes
+          ${{ steps.changelog.outputs.changelog }}
+
+          ### Deployment
+          Automatically deployed to Kubernetes.
+
+          | Property | Value |
+          |----------|-------|
+          | Namespace | `${{ inputs.k8s_namespace }}` |
+          | Helm Release | `${{ inputs.helm_release_name }}` |
+          | Commit | `${{ github.sha }}` |
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ github.token }}

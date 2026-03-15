@@ -1,0 +1,96 @@
+name: Semantic Version
+description: Calculate next semantic version from git tags and commit messages
+
+inputs:
+  version_bump:
+    description: 'Override bump type (patch/minor/major). Empty = auto-detect from commit.'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'New version number (e.g. 1.2.3)'
+    value: ${{ steps.calc.outputs.version }}
+  tag:
+    description: 'New git tag (e.g. v1.2.3)'
+    value: ${{ steps.calc.outputs.tag }}
+  bump_type:
+    description: 'Resolved bump type'
+    value: ${{ steps.calc.outputs.bump_type }}
+  previous_tag:
+    description: 'Previous git tag'
+    value: ${{ steps.calc.outputs.previous_tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch tags
+      shell: bash
+      run: git fetch --tags --force
+
+    - name: Calculate next version
+      id: calc
+      shell: bash
+      run: |
+        LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+
+        if [ -z "$LATEST_TAG" ]; then
+          LATEST_TAG="v0.0.0"
+          echo "No existing tags found, starting from v0.0.0"
+        fi
+
+        echo "Latest tag: $LATEST_TAG"
+
+        VERSION=${LATEST_TAG#v}
+        MAJOR=$(echo $VERSION | cut -d. -f1)
+        MINOR=$(echo $VERSION | cut -d. -f2)
+        PATCH=$(echo $VERSION | cut -d. -f3)
+
+        BUMP_TYPE="${{ inputs.version_bump }}"
+
+        if [ -z "$BUMP_TYPE" ]; then
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if echo "$COMMIT_MSG" | grep -qiE "^(breaking|major):|BREAKING CHANGE"; then
+            BUMP_TYPE="major"
+          elif echo "$COMMIT_MSG" | grep -qiE "^(feat|feature):"; then
+            BUMP_TYPE="minor"
+          else
+            BUMP_TYPE="patch"
+          fi
+        fi
+
+        echo "Bump type: $BUMP_TYPE"
+
+        case $BUMP_TYPE in
+          major)
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+            ;;
+          minor)
+            MINOR=$((MINOR + 1))
+            PATCH=0
+            ;;
+          patch|*)
+            PATCH=$((PATCH + 1))
+            ;;
+        esac
+
+        NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+        NEW_TAG="v${NEW_VERSION}"
+
+        if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+          echo "Tag $NEW_TAG already exists!"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          NEW_VERSION="${NEW_VERSION}-${TIMESTAMP}"
+          NEW_TAG="v${NEW_VERSION}"
+          echo "Using timestamped version: $NEW_VERSION"
+        fi
+
+        echo "New version: $NEW_VERSION"
+        echo "New tag: $NEW_TAG"
+
+        echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+        echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+        echo "previous_tag=$LATEST_TAG" >> $GITHUB_OUTPUT

@@ -1,29 +1,30 @@
 # Centralized CI/CD Module for GitHub
 
-Shared reusable workflows, runner infrastructure, and deployment automation for all microservices.
+Shared reusable workflows, composite actions, and runner infrastructure for all microservices.
 
 ## Repository Structure
 
 ```
 shared-devops/
 │
-├── .github/
-│   └── workflows/
-│       └── build-deploy.yml            # Reusable workflow (called by all service repos)
+├── .github/workflows/
+│   └── build-deploy.yml                # Orchestrator workflow (calls actions below)
+│
+├── actions/
+│   ├── semantic-version/action.yml     # Auto version from git tags + commit messages
+│   ├── kaniko-build/action.yml         # Build & push Docker image (no daemon)
+│   ├── github-release/action.yml       # Git tag + changelog + GitHub Release
+│   └── helm-deploy/action.yml          # Deploy to Kubernetes via Helm OCI chart
 │
 ├── runner/
 │   └── Dockerfile                      # Custom ARC runner image
-│
-├── arc/
-│   ├── values-ayush.yaml               # ARC config for AyushHealthcare org
-│   └── values-quefly.yaml              # ARC config for queflyhq org
 │
 └── README.md
 ```
 
 ## Usage
 
-Each service repo needs only a thin caller workflow:
+Each service repo needs only a thin caller workflow (~25 lines):
 
 ```yaml
 # .github/workflows/docker-build.yml
@@ -65,16 +66,28 @@ jobs:
 | `health_check_path` | No | — | Health endpoint (e.g. `/actuator/health`) |
 | `health_check_port` | No | `8080` | Container port |
 
-## Pipeline Stages
+## Pipeline
 
 ```
-Version → Build → Vault → Kaniko → Release → Deploy → Verify
+Checkout → Version → Build → Vault → Kaniko → Release → Deploy → Verify
 ```
 
-1. **Version** — Semantic versioning from git tags + commit message conventions
-2. **Build** — Application build with Maven/npm dependency caching
-3. **Vault** — Docker Hub credentials via HashiCorp Vault (JWT/OIDC auth)
-4. **Kaniko** — Build & push container image (no Docker daemon)
-5. **Release** — Git tag + GitHub Release with auto-generated changelog
-6. **Deploy** — Helm upgrade to Kubernetes using shared OCI chart
-7. **Verify** — Rollout status check + optional health check
+| Stage | Action | Description |
+|-------|--------|-------------|
+| **Version** | `actions/semantic-version` | Semver from git tags + conventional commits |
+| **Build** | inline | Maven/npm with dependency caching |
+| **Vault** | `hashicorp/vault-action` | Docker Hub credentials via JWT/OIDC |
+| **Kaniko** | `actions/kaniko-build` | Build & push container image |
+| **Release** | `actions/github-release` | Git tag + changelog + GitHub Release |
+| **Deploy** | `actions/helm-deploy` | Helm upgrade + rollout verify + health check |
+
+## Composite Actions
+
+Each action can also be used independently in custom workflows:
+
+```yaml
+- uses: queflyhq/shared-devops/actions/semantic-version@main
+- uses: queflyhq/shared-devops/actions/kaniko-build@main
+- uses: queflyhq/shared-devops/actions/github-release@main
+- uses: queflyhq/shared-devops/actions/helm-deploy@main
+```

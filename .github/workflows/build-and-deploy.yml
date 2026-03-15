@@ -70,6 +70,16 @@ on:
         type: string
         default: '8080'
 
+      # ── Security ──
+      scout_enabled:
+        required: false
+        type: boolean
+        default: true
+      scout_severities:
+        required: false
+        type: string
+        default: 'critical,high'
+
       # ── Deploy ──
       skip_deploy:
         required: false
@@ -165,6 +175,17 @@ jobs:
           docker push $IMAGE
 
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      # ── Docker Scout ──
+      - name: Docker Scout - vulnerability scan
+        if: inputs.scout_enabled
+        uses: docker/scout-action@v1
+        with:
+          command: quickview,cves
+          image: ${{ inputs.registry_org }}/${{ inputs.image_name }}:${{ steps.version.outputs.version }}
+          only-severities: ${{ inputs.scout_severities }}
+          sarif-file: scout-results.sarif
+        continue-on-error: true
 
       # ── Release ──
       - name: Create release

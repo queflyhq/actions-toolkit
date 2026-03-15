@@ -66,6 +66,8 @@ jobs:
 | `k8s_namespace` | Yes | — | Kubernetes namespace |
 | `build_command` | No | `mvn clean package -DskipTests -B` | Build command |
 | `skip_build` | No | `false` | Skip build (config-only services) |
+| `scout_enabled` | No | `true` | Run Docker Scout vulnerability scan |
+| `scout_severities` | No | `critical,high` | Severity levels to report |
 | `skip_deploy` | No | `false` | Skip deploy (build-only) |
 | `registry_org` | Yes | — | Docker registry org/namespace |
 | `vault_addr` | Yes | — | HashiCorp Vault URL |
@@ -91,6 +93,7 @@ jobs:
 | **Version** | build | Semver from git tags + conventional commits |
 | **Compile** | build | Maven/npm with dependency caching |
 | **Docker** | build | Build & push container image (DinD) |
+| **Scout** | build | Docker Scout vulnerability scan (critical/high) |
 | **Release** | build | Git tag + changelog + GitHub Release |
 | **Deploy** | deploy | Helm upgrade + rollout verify + health check |
 

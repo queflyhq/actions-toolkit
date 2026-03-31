@@ -1,5 +1,5 @@
 # =============================================================================
-# Catalyst — minimal CI/CD runner (~80MB)
+# Catalyst — ultra-light CI/CD runner (~50MB)
 # Public image: queflyhq/catalyst:latest
 #
 # Philosophy: Ship nothing. Install what you need, when you need it.
@@ -15,16 +15,13 @@ FROM alpine:3.21
 
 RUN apk add --no-cache \
     bash curl wget git jq yq tar gzip unzip \
-    openssh-client ca-certificates gnupg \
-    docker-cli make gcc musl-dev
+    openssh-client ca-certificates gnupg make
 
 COPY catalyst /usr/local/bin/catalyst
 RUN chmod +x /usr/local/bin/catalyst
 
-# Minimal verification
 RUN echo "=== Catalyst ===" && \
     git --version && \
-    docker --version && \
     jq --version && \
     catalyst --help | head -1
 

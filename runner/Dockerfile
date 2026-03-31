@@ -19,9 +19,14 @@ FROM alpine:3.21 AS base
 RUN apk upgrade --no-cache
 
 RUN apk add --no-cache \
-    bash curl wget git jq yq tar gzip unzip \
+    bash curl wget git jq tar gzip unzip \
     openssh-client ca-certificates gnupg make \
     && rm -rf /var/cache/apk/*
+
+# Install yq as static binary (not Alpine yq-go which pulls vulnerable Go stdlib)
+RUN curl -fsSL -o /usr/local/bin/yq \
+    "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" \
+    && chmod +x /usr/local/bin/yq
 
 COPY catalyst /usr/local/bin/catalyst
 RUN chmod +x /usr/local/bin/catalyst

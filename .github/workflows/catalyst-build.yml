@@ -56,20 +56,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Version
+        id: version
+        run: |
+          git fetch --tags --force
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            VER="1.0.0"
+          else
+            PATCH=$(echo ${LATEST#v} | cut -d. -f3)
+            VER="1.0.$((PATCH + 1))"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
       - name: Generate tags
         id: tags
         run: |
+          VER="${{ steps.version.outputs.version }}"
           DATE=$(date +%Y.%m.%d)
           CUSTOM="${{ github.event.inputs.tag }}"
+          SHA="${GITHUB_SHA::7}"
 
           TAGS="${IMAGE}:latest"
+          TAGS="${TAGS},${IMAGE}:${VER}"
           TAGS="${TAGS},${IMAGE}:${DATE}"
+          TAGS="${TAGS},${IMAGE}:sha-${SHA}"
           TAGS="${TAGS},ghcr.io/${IMAGE}:latest"
-          TAGS="${TAGS},ghcr.io/${IMAGE}:${DATE}"
+          TAGS="${TAGS},ghcr.io/${IMAGE}:${VER}"
 
           [ -n "$CUSTOM" ] && TAGS="${TAGS},${IMAGE}:${CUSTOM},ghcr.io/${IMAGE}:${CUSTOM}"
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - name: Tag release
+        if: github.ref == 'refs/heads/main'
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          git tag "v${VER}" || true
+          git push origin "v${VER}" 2>/dev/null || true
 
       - name: Build and push with attestation
         uses: docker/build-push-action@v5

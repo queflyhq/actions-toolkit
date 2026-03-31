@@ -62,7 +62,10 @@ runs:
           # Race detector requires cgo — only enable if gcc is available
           command -v gcc >/dev/null 2>&1 && RACE_FLAG="-race" || echo "Skipping -race (cgo not available)"
         fi
-        go test -v $RACE_FLAG -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
+        # Check if covdata tool is available (missing on Alpine/musl)
+        COV_FLAG=""
+        go tool covdata help >/dev/null 2>&1 && COV_FLAG="-coverprofile=coverage.out"
+        go test -v $RACE_FLAG $COV_FLAG ./... 2>&1 | tee test-output.txt
         echo "### Go Test Results" >> $GITHUB_STEP_SUMMARY
         tail -3 test-output.txt >> $GITHUB_STEP_SUMMARY
 
@@ -71,6 +74,10 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
+        if [ ! -f coverage.out ]; then
+          echo "Coverage file not generated (covdata not available), skipping"
+          exit 0
+        fi
         COV=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
         echo "**Coverage: ${COV}%**" >> $GITHUB_STEP_SUMMARY
         if (( $(echo "$COV < ${{ inputs.coverage_threshold }}" | bc -l) )); then

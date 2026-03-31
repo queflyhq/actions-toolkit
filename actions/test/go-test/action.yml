@@ -45,7 +45,10 @@ runs:
       working-directory: ${{ inputs.working_directory }}
       run: |
         RACE_FLAG=""
-        [ "${{ inputs.race }}" = "true" ] && RACE_FLAG="-race"
+        if [ "${{ inputs.race }}" = "true" ]; then
+          # Race detector requires cgo — only enable if gcc is available
+          command -v gcc >/dev/null 2>&1 && RACE_FLAG="-race" || echo "Skipping -race (cgo not available)"
+        fi
         go test -v $RACE_FLAG -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
         echo "### Go Test Results" >> $GITHUB_STEP_SUMMARY
         tail -3 test-output.txt >> $GITHUB_STEP_SUMMARY

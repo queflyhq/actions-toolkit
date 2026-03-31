@@ -1,5 +1,5 @@
 name: Cloud Run Deploy
-description: Deploy container image to GCP Cloud Run. Assumes gcloud is pre-installed.
+description: Deploy container image to GCP Cloud Run. Auto-installs gcloud via catalyst if missing.
 
 inputs:
   service:
@@ -42,11 +42,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install dependencies
       shell: bash
       run: |
-        command -v gcloud >/dev/null 2>&1 || { echo "::error::gcloud CLI is not installed. Use queflyhq/catalyst runner or install gcloud."; exit 1; }
-        command -v docker >/dev/null 2>&1 || { echo "::error::Docker CLI is not installed."; exit 1; }
+        if ! command -v gcloud >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install gcloud || { echo "::error::gcloud CLI is not installed and catalyst is not available."; exit 1; }
+        fi
 
     - name: Authenticate
       shell: bash

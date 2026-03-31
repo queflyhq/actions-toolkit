@@ -1,5 +1,5 @@
 name: Go Test
-description: Run Go tests with coverage. Assumes Go is pre-installed (Catalyst runner).
+description: Run Go tests with coverage. Auto-installs Go via catalyst if missing.
 
 inputs:
   working_directory:
@@ -22,10 +22,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Go
       shell: bash
       run: |
-        command -v go >/dev/null 2>&1 || { echo "::error::Go is not installed. Use queflyhq/catalyst runner or install Go."; exit 1; }
+        if ! command -v go >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install go || { echo "::error::Go is not installed and catalyst is not available."; exit 1; }
+        fi
         echo "Go $(go version | awk '{print $3}')"
 
     - name: Configure

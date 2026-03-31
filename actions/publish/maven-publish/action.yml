@@ -24,11 +24,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Java & Maven
       shell: bash
       run: |
-        command -v java >/dev/null 2>&1 || { echo "::error::Java is not installed."; exit 1; }
-        command -v mvn >/dev/null 2>&1 || { echo "::error::Maven is not installed."; exit 1; }
+        if ! command -v java >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install java || { echo "::error::Java is not installed and catalyst is not available."; exit 1; }
+        fi
+        if ! command -v mvn >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install maven || { echo "::error::Maven is not installed and catalyst is not available."; exit 1; }
+        fi
 
     - name: Import GPG key
       if: inputs.gpg_key != ''

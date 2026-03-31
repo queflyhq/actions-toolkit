@@ -29,6 +29,7 @@ runs:
       shell: bash
       run: |
         if ! command -v trivy >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install trivy || \
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
         fi
 

@@ -13,10 +13,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Ruby
       shell: bash
       run: |
-        command -v gem >/dev/null 2>&1 || { echo "::error::Ruby/gem is not installed."; exit 1; }
+        if ! command -v gem >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install ruby || { echo "::error::Ruby/gem is not installed and catalyst is not available."; exit 1; }
+        fi
 
     - name: Build and publish
       shell: bash

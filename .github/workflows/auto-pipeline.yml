@@ -137,7 +137,7 @@ jobs:
         if: needs.detect.outputs.lang == 'sveltekit'
         shell: bash
         run: |
-          command -v node >/dev/null 2>&1 || { echo "::error::Node.js not installed."; exit 1; }
+          command -v node >/dev/null 2>&1 || catalyst install node
           npm ci && npm run build
 
       # .NET
@@ -145,7 +145,7 @@ jobs:
         if: needs.detect.outputs.lang == 'dotnet'
         shell: bash
         run: |
-          command -v dotnet >/dev/null 2>&1 || { echo "::error::.NET not installed."; exit 1; }
+          command -v dotnet >/dev/null 2>&1 || catalyst install dotnet
           dotnet test
 
       # Rust
@@ -153,7 +153,7 @@ jobs:
         if: needs.detect.outputs.lang == 'rust'
         shell: bash
         run: |
-          command -v cargo >/dev/null 2>&1 || { echo "::error::Rust not installed."; exit 1; }
+          command -v cargo >/dev/null 2>&1 || catalyst install rust
           cargo test
 
       # Ruby
@@ -161,7 +161,7 @@ jobs:
         if: needs.detect.outputs.lang == 'ruby'
         shell: bash
         run: |
-          command -v ruby >/dev/null 2>&1 || { echo "::error::Ruby not installed."; exit 1; }
+          command -v ruby >/dev/null 2>&1 || catalyst install ruby
           bundle install && bundle exec rake test 2>/dev/null || ruby test_*.rb 2>/dev/null || echo "No tests found"
 
       # PHP
@@ -169,7 +169,7 @@ jobs:
         if: needs.detect.outputs.lang == 'php'
         shell: bash
         run: |
-          command -v php >/dev/null 2>&1 || { echo "::error::PHP not installed."; exit 1; }
+          command -v php >/dev/null 2>&1 || catalyst install php
           [ -f composer.json ] && composer install
           php vendor/bin/phpunit 2>/dev/null || php test_*.php 2>/dev/null || echo "No tests found"
 

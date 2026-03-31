@@ -21,11 +21,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Node.js
       shell: bash
       run: |
-        command -v node >/dev/null 2>&1 || { echo "::error::Node.js is not installed."; exit 1; }
-        command -v npm >/dev/null 2>&1 || { echo "::error::npm is not installed."; exit 1; }
+        if ! command -v node >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install node || { echo "::error::Node.js is not installed and catalyst is not available."; exit 1; }
+        fi
 
     - name: Publish
       shell: bash

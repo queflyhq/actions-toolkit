@@ -37,10 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Preflight
+      - name: Install Node.js
         shell: bash
         run: |
-          command -v node >/dev/null 2>&1 || { echo "::error::Node.js is not installed."; exit 1; }
+          command -v node >/dev/null 2>&1 || catalyst install node
           echo "Node $(node --version)"
 
       - name: Install

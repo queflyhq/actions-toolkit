@@ -13,10 +13,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Python
       shell: bash
       run: |
-        command -v python3 >/dev/null 2>&1 || { echo "::error::Python is not installed."; exit 1; }
+        if ! command -v python3 >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install python || { echo "::error::Python is not installed and catalyst is not available."; exit 1; }
+        fi
         pip install build twine
 
     - name: Build and publish

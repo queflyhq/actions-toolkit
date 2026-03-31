@@ -1,5 +1,5 @@
 name: Java Test
-description: Run Java tests via Maven or Gradle. Assumes Java is pre-installed (Catalyst runner).
+description: Run Java tests via Maven or Gradle. Auto-installs Java/Maven via catalyst if missing.
 
 inputs:
   working_directory:
@@ -14,14 +14,16 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Java
       shell: bash
       run: |
-        command -v java >/dev/null 2>&1 || { echo "::error::Java is not installed. Use queflyhq/catalyst runner or install Java."; exit 1; }
+        if ! command -v java >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install java || { echo "::error::Java is not installed and catalyst is not available."; exit 1; }
+        fi
         if [ "${{ inputs.build_tool }}" = "gradle" ]; then
           [ -f "${{ inputs.working_directory }}/gradlew" ] || { echo "::error::gradlew not found in ${{ inputs.working_directory }}"; exit 1; }
-        else
-          command -v mvn >/dev/null 2>&1 || { echo "::error::Maven is not installed. Use queflyhq/catalyst runner or install Maven."; exit 1; }
+        elif ! command -v mvn >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install maven || { echo "::error::Maven is not installed and catalyst is not available."; exit 1; }
         fi
         echo "Java $(java --version 2>&1 | head -1)"
 

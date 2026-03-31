@@ -1,5 +1,5 @@
 name: Python Test
-description: Run Python tests. Assumes Python is pre-installed (Catalyst runner).
+description: Run Python tests. Auto-installs Python via catalyst if missing.
 
 inputs:
   working_directory:
@@ -14,10 +14,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install Python
       shell: bash
       run: |
-        command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || { echo "::error::Python is not installed. Use queflyhq/catalyst runner or install Python."; exit 1; }
+        if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install python || { echo "::error::Python is not installed and catalyst is not available."; exit 1; }
+        fi
         python3 --version 2>/dev/null || python --version
 
     - name: Install deps

@@ -13,10 +13,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preflight
+    - name: Install .NET
       shell: bash
       run: |
-        command -v dotnet >/dev/null 2>&1 || { echo "::error::.NET SDK is not installed."; exit 1; }
+        if ! command -v dotnet >/dev/null 2>&1; then
+          command -v catalyst >/dev/null 2>&1 && catalyst install dotnet || { echo "::error::.NET SDK is not installed and catalyst is not available."; exit 1; }
+        fi
 
     - name: Pack and publish
       shell: bash

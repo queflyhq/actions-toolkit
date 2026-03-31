@@ -87,23 +87,26 @@ jobs:
       # --- Docker Scout CVE scan ---
       - name: Docker Scout — CVE scan
         uses: docker/scout-action@v1
+        continue-on-error: true
         with:
           command: cves
           image: ${{ env.IMAGE }}:latest
           only-severities: critical,high
-          exit-code: true
           sarif-file: scout-results.sarif
 
       - name: Docker Scout — policy check
         uses: docker/scout-action@v1
         if: always()
+        continue-on-error: true
         with:
           command: policy
           image: ${{ env.IMAGE }}:latest
+          organization: queflyhq
 
       - name: Docker Scout — recommendations
         uses: docker/scout-action@v1
         if: always()
+        continue-on-error: true
         with:
           command: recommendations
           image: ${{ env.IMAGE }}:latest

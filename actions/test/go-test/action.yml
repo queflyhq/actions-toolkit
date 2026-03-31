@@ -14,6 +14,10 @@ inputs:
     description: 'GOPRIVATE pattern'
     required: false
     default: ''
+  github_token:
+    description: 'GitHub token for private deps (PAT with repo scope for cross-repo access)'
+    required: false
+    default: ''
   race:
     description: 'Enable race detector'
     required: false
@@ -35,7 +39,9 @@ runs:
       run: |
         if [ -n "${{ inputs.goprivate }}" ]; then
           go env -w GOPRIVATE="${{ inputs.goprivate }}"
-          git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          TOKEN="${{ inputs.github_token }}"
+          [ -z "$TOKEN" ] && TOKEN="${GITHUB_TOKEN}"
+          git config --global url."https://${TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
       env:
         GITHUB_TOKEN: ${{ github.token }}

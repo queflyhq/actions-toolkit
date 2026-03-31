@@ -1,0 +1,262 @@
+#!/bin/bash
+# catalyst — on-demand tool installer for CI/CD pipelines
+# Usage: catalyst install go node java python terraform helm kubectl aws gcloud
+
+set -euo pipefail
+
+VERSION="1.0.0"
+CACHE_DIR="${CATALYST_CACHE:-/tmp/catalyst}"
+mkdir -p "$CACHE_DIR"
+
+# ── Tool definitions ──
+
+install_go() {
+  local ver="${GO_VERSION:-1.23.6}"
+  echo "Installing Go $ver..."
+  curl -fsSL "https://go.dev/dl/go${ver}.linux-amd64.tar.gz" | tar xz -C /usr/local
+  export PATH="/usr/local/go/bin:$PATH"
+  echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.bashrc
+  go version
+}
+
+install_node() {
+  local ver="${NODE_VERSION:-20}"
+  echo "Installing Node.js $ver..."
+  curl -fsSL "https://unofficial-builds.nodejs.org/download/release/v${ver}.18.0/node-v${ver}.18.0-linux-x64-musl.tar.gz" | tar xz -C /usr/local --strip-components=1 2>/dev/null || \
+  apk add --no-cache nodejs npm
+  node --version
+}
+
+install_java() {
+  local ver="${JAVA_VERSION:-21}"
+  echo "Installing Java $ver (Eclipse Temurin)..."
+  curl -fsSL "https://api.adoptium.net/v3/binary/latest/${ver}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz
+  mkdir -p /usr/lib/jvm && tar xzf /tmp/jdk.tar.gz -C /usr/lib/jvm && rm /tmp/jdk.tar.gz
+  ln -sf /usr/lib/jvm/jdk-* /usr/lib/jvm/temurin
+  export JAVA_HOME=/usr/lib/jvm/temurin PATH="/usr/lib/jvm/temurin/bin:$PATH"
+  echo 'export JAVA_HOME=/usr/lib/jvm/temurin' >> ~/.bashrc
+  echo 'export PATH="$JAVA_HOME/bin:$PATH"' >> ~/.bashrc
+  java --version 2>&1 | head -1
+}
+
+install_maven() {
+  local ver="${MAVEN_VERSION:-3.9.9}"
+  echo "Installing Maven $ver..."
+  curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${ver}/binaries/apache-maven-${ver}-bin.tar.gz" | tar xz -C /opt
+  ln -sf /opt/apache-maven-${ver}/bin/mvn /usr/local/bin/mvn
+  mvn --version | head -1
+}
+
+install_python() {
+  echo "Installing Python..."
+  apk add --no-cache python3 py3-pip
+  python3 --version
+}
+
+install_helm() {
+  echo "Installing Helm 3..."
+  curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  helm version --short
+}
+
+install_kubectl() {
+  local ver="${KUBECTL_VERSION:-1.31.0}"
+  echo "Installing kubectl $ver..."
+  curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v${ver}/bin/linux/amd64/kubectl"
+  chmod +x /usr/local/bin/kubectl
+  kubectl version --client 2>/dev/null | head -1
+}
+
+install_terraform() {
+  echo "Installing Terraform..."
+  local ver=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | jq -r .current_version)
+  curl -fsSL "https://releases.hashicorp.com/terraform/${ver}/terraform_${ver}_linux_amd64.zip" -o /tmp/tf.zip
+  unzip -o /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
+  terraform --version | head -1
+}
+
+install_terragrunt() {
+  local ver="${TERRAGRUNT_VERSION:-0.77.22}"
+  echo "Installing Terragrunt $ver..."
+  curl -fsSL -o /usr/local/bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${ver}/terragrunt_linux_amd64"
+  chmod +x /usr/local/bin/terragrunt
+  terragrunt --version | head -1
+}
+
+install_aws() {
+  echo "Installing AWS CLI..."
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/aws.zip
+  unzip -q /tmp/aws.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/aws.zip
+  aws --version
+}
+
+install_gcloud() {
+  echo "Installing Google Cloud SDK..."
+  curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar xz -C /opt
+  /opt/google-cloud-sdk/install.sh --quiet --path-update=true
+  export PATH="/opt/google-cloud-sdk/bin:$PATH"
+  echo 'export PATH="/opt/google-cloud-sdk/bin:$PATH"' >> ~/.bashrc
+  gcloud --version | head -1
+}
+
+install_vault() {
+  echo "Installing Vault..."
+  local ver=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/vault | jq -r .current_version)
+  curl -fsSL "https://releases.hashicorp.com/vault/${ver}/vault_${ver}_linux_amd64.zip" -o /tmp/vault.zip
+  unzip -o /tmp/vault.zip -d /usr/local/bin && rm /tmp/vault.zip
+  vault --version
+}
+
+install_argocd() {
+  local ver="${ARGOCD_VERSION:-2.14.12}"
+  echo "Installing ArgoCD CLI $ver..."
+  curl -fsSL -o /usr/local/bin/argocd "https://github.com/argoproj/argo-cd/releases/download/v${ver}/argocd-linux-amd64"
+  chmod +x /usr/local/bin/argocd
+  argocd version --client --short 2>/dev/null
+}
+
+install_kustomize() {
+  local ver="${KUSTOMIZE_VERSION:-5.6.0}"
+  echo "Installing Kustomize $ver..."
+  curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${ver}/kustomize_v${ver}_linux_amd64.tar.gz" | tar xz -C /usr/local/bin
+  kustomize version
+}
+
+install_ansible() {
+  echo "Installing Ansible..."
+  apk add --no-cache python3 py3-pip
+  pip install --break-system-packages ansible
+  ansible --version | head -1
+}
+
+install_ruby() {
+  echo "Installing Ruby..."
+  apk add --no-cache ruby ruby-dev
+  ruby --version
+}
+
+install_php() {
+  echo "Installing PHP..."
+  apk add --no-cache php83 php83-curl php83-json php83-mbstring php83-openssl
+  ln -sf /usr/bin/php83 /usr/bin/php
+  php --version | head -1
+}
+
+install_dotnet() {
+  echo "Installing .NET SDK..."
+  curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet
+  ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet
+  dotnet --version
+}
+
+install_rust() {
+  echo "Installing Rust..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+  source "$HOME/.cargo/env"
+  rustc --version
+}
+
+install_kaniko() {
+  echo "Installing Kaniko..."
+  curl -fsSL -o /usr/local/bin/executor "https://github.com/GoogleContainerTools/kaniko/releases/latest/download/executor"
+  chmod +x /usr/local/bin/executor 2>/dev/null || \
+  echo "Use kaniko as container: gcr.io/kaniko-project/executor"
+}
+
+install_trivy() {
+  echo "Installing Trivy..."
+  curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+  trivy --version | head -1
+}
+
+install_gh() {
+  echo "Installing GitHub CLI..."
+  local ver=$(curl -s https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name | sed 's/v//')
+  curl -fsSL "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_amd64.tar.gz" | tar xz -C /tmp
+  mv /tmp/gh_${ver}_linux_amd64/bin/gh /usr/local/bin/
+  rm -rf /tmp/gh_*
+  gh --version | head -1
+}
+
+# ── Commands ──
+
+cmd_install() {
+  for tool in "$@"; do
+    # Skip if already installed
+    if command -v "$tool" >/dev/null 2>&1; then
+      echo "✓ $tool already installed"
+      continue
+    fi
+
+    case "$tool" in
+      go)         install_go ;;
+      node|nodejs) install_node ;;
+      java)       install_java ;;
+      maven|mvn)  install_maven ;;
+      python|python3) install_python ;;
+      helm)       install_helm ;;
+      kubectl)    install_kubectl ;;
+      terraform|tf) install_terraform ;;
+      terragrunt|tg) install_terragrunt ;;
+      aws)        install_aws ;;
+      gcloud|gcp) install_gcloud ;;
+      vault)      install_vault ;;
+      argocd)     install_argocd ;;
+      kustomize)  install_kustomize ;;
+      ansible)    install_ansible ;;
+      ruby)       install_ruby ;;
+      php)        install_php ;;
+      dotnet)     install_dotnet ;;
+      rust|cargo) install_rust ;;
+      kaniko)     install_kaniko ;;
+      trivy)      install_trivy ;;
+      gh)         install_gh ;;
+      *) echo "Unknown tool: $tool"; exit 1 ;;
+    esac
+    echo "✓ $tool installed"
+  done
+}
+
+cmd_help() {
+  cat <<HELP
+catalyst v${VERSION} — on-demand CI/CD tool installer
+
+Usage:
+  catalyst install <tool> [tool...]    Install one or more tools
+  catalyst list                        List available tools
+  catalyst help                        Show this help
+
+Available tools:
+  Languages:  go, node, java, maven, python, ruby, php, dotnet, rust
+  K8s:        helm, kubectl, kustomize, argocd
+  Cloud:      aws, gcloud, terraform, terragrunt, vault
+  CI/CD:      kaniko, trivy, gh, ansible
+
+Environment variables (override versions):
+  GO_VERSION, NODE_VERSION, JAVA_VERSION, MAVEN_VERSION,
+  KUBECTL_VERSION, TERRAGRUNT_VERSION, ARGOCD_VERSION, KUSTOMIZE_VERSION
+
+Examples:
+  catalyst install go node             # Go + Node.js
+  catalyst install java maven          # Java + Maven
+  GO_VERSION=1.25.0 catalyst install go  # Specific Go version
+  catalyst install terraform aws       # IaC + cloud CLI
+HELP
+}
+
+cmd_list() {
+  echo "Available tools:"
+  echo "  go node java maven python ruby php dotnet rust"
+  echo "  helm kubectl kustomize argocd"
+  echo "  aws gcloud terraform terragrunt vault"
+  echo "  kaniko trivy gh ansible"
+}
+
+# ── Main ──
+
+case "${1:-help}" in
+  install) shift; cmd_install "$@" ;;
+  list)    cmd_list ;;
+  help|--help|-h) cmd_help ;;
+  *) echo "Unknown command: $1"; cmd_help; exit 1 ;;
+esac

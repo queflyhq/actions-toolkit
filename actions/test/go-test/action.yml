@@ -33,8 +33,10 @@ runs:
     - name: Configure
       shell: bash
       run: |
-        [ -n "${{ inputs.goprivate }}" ] && go env -w GOPRIVATE="${{ inputs.goprivate }}"
-        [ -n "${{ inputs.goprivate }}" ] && git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        if [ -n "${{ inputs.goprivate }}" ]; then
+          go env -w GOPRIVATE="${{ inputs.goprivate }}"
+          git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        fi
       env:
         GITHUB_TOKEN: ${{ github.token }}
 

@@ -1,0 +1,72 @@
+name: SvelteKit Build & Deploy
+description: Build SvelteKit app and deploy to Cloudflare Pages or static hosting.
+
+inputs:
+  node_version:
+    description: 'Node.js version'
+    required: false
+    default: '20'
+  working_directory:
+    description: 'Directory containing package.json'
+    required: false
+    default: '.'
+  build_command:
+    description: 'Build command'
+    required: false
+    default: 'npm run build'
+  deploy_target:
+    description: 'Deploy target: cloudflare, static, or none'
+    required: false
+    default: 'none'
+  cloudflare_account_id:
+    description: 'Cloudflare account ID'
+    required: false
+  cloudflare_api_token:
+    description: 'Cloudflare API token'
+    required: false
+  cloudflare_project:
+    description: 'Cloudflare Pages project name'
+    required: false
+  output_dir:
+    description: 'Build output directory'
+    required: false
+    default: 'build'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: 'npm'
+        cache-dependency-path: ${{ inputs.working_directory }}/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: npm ci
+
+    - name: Build
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: ${{ inputs.build_command }}
+
+    - name: Deploy to Cloudflare Pages
+      if: inputs.deploy_target == 'cloudflare'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        npx wrangler pages deploy ${{ inputs.output_dir }} \
+          --project-name=${{ inputs.cloudflare_project }} \
+          --branch=${GITHUB_REF_NAME}
+      env:
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare_api_token }}
+
+    - name: Upload build artifact
+      if: inputs.deploy_target != 'cloudflare'
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-${{ inputs.cloudflare_project || 'app' }}
+        path: ${{ inputs.working_directory }}/${{ inputs.output_dir }}

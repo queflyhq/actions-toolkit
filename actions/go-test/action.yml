@@ -1,0 +1,62 @@
+name: Go Test
+description: Run Go tests with coverage. Works with any Go service or library.
+
+inputs:
+  go_version:
+    description: 'Go version'
+    required: false
+    default: '1.25'
+  working_directory:
+    description: 'Directory containing go.mod'
+    required: false
+    default: '.'
+  coverage_threshold:
+    description: 'Minimum coverage % (0 to skip check)'
+    required: false
+    default: '0'
+  goprivate:
+    description: 'GOPRIVATE pattern for private modules'
+    required: false
+    default: 'github.com/queflyhq/*'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go_version }}
+
+    - name: Configure private modules
+      shell: bash
+      run: |
+        go env -w GOPRIVATE="${{ inputs.goprivate }}"
+        git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Download dependencies
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: go mod download
+
+    - name: Run tests
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        go test -v -race -coverprofile=coverage.out ./...
+        echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+        go test -count=1 ./... 2>&1 | tail -5 >> $GITHUB_STEP_SUMMARY
+
+    - name: Check coverage
+      if: inputs.coverage_threshold != '0'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Coverage: ${COVERAGE}%"
+        echo "**Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
+        if (( $(echo "$COVERAGE < ${{ inputs.coverage_threshold }}" | bc -l) )); then
+          echo "::error::Coverage ${COVERAGE}% is below threshold ${{ inputs.coverage_threshold }}%"
+          exit 1
+        fi

@@ -1,0 +1,48 @@
+# Reusable workflow: SvelteKit CI (build + optional deploy to Cloudflare Pages)
+# Usage in any SvelteKit repo:
+#
+# jobs:
+#   ci:
+#     uses: queflyhq/actions-toolkit/.github/workflows/sveltekit-ci.yml@main
+#     with:
+#       cloudflare_project: authfi-website
+#     secrets: inherit
+
+name: SvelteKit CI
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      cloudflare_project:
+        description: 'Cloudflare Pages project name'
+        required: false
+        type: string
+      deploy:
+        description: 'Deploy to Cloudflare Pages'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      CLOUDFLARE_API_TOKEN:
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: queflyhq/actions-toolkit/actions/sveltekit-build@main
+        with:
+          node_version: ${{ inputs.node_version }}
+          deploy_target: ${{ inputs.deploy && 'cloudflare' || 'none' }}
+          cloudflare_project: ${{ inputs.cloudflare_project }}
+          cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}

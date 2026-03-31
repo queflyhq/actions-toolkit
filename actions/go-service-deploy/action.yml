@@ -1,0 +1,105 @@
+name: Go Service Build & Deploy
+description: Build Go binary, Docker image, push, and deploy to Cloud Run or K8s.
+
+inputs:
+  service_name:
+    description: 'Service name (e.g. authfi-auth-service)'
+    required: true
+  image_tag:
+    description: 'Image tag (e.g. v1.0.0 or sha-abc1234)'
+    required: true
+  registry:
+    description: 'Container registry (dockerhub, gcr, ghcr)'
+    required: false
+    default: 'dockerhub'
+  registry_org:
+    description: 'Registry org/namespace'
+    required: false
+    default: 'queflyhq'
+  registry_username:
+    description: 'Registry username'
+    required: true
+  registry_token:
+    description: 'Registry token/password'
+    required: true
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: './Dockerfile'
+  deploy_target:
+    description: 'Deploy target: cloudrun, k8s, or none'
+    required: false
+    default: 'none'
+  gcp_project:
+    description: 'GCP project ID (for Cloud Run)'
+    required: false
+  gcp_region:
+    description: 'GCP region (for Cloud Run)'
+    required: false
+    default: 'asia-south1'
+  gcp_credentials:
+    description: 'GCP service account key JSON'
+    required: false
+  k8s_namespace:
+    description: 'K8s namespace'
+    required: false
+    default: 'default'
+  k8s_deployment:
+    description: 'K8s deployment name'
+    required: false
+
+outputs:
+  image:
+    description: 'Full image reference'
+    value: ${{ steps.push.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - name: Login to registry
+      shell: bash
+      run: |
+        if [ "${{ inputs.registry }}" = "ghcr" ]; then
+          echo "${{ inputs.registry_token }}" | docker login ghcr.io -u "${{ inputs.registry_username }}" --password-stdin
+        else
+          echo "${{ inputs.registry_token }}" | docker login -u "${{ inputs.registry_username }}" --password-stdin
+        fi
+
+    - name: Build and push
+      id: push
+      shell: bash
+      run: |
+        if [ "${{ inputs.registry }}" = "ghcr" ]; then
+          IMAGE="ghcr.io/${{ inputs.registry_org }}/${{ inputs.service_name }}:${{ inputs.image_tag }}"
+        else
+          IMAGE="${{ inputs.registry_org }}/${{ inputs.service_name }}:${{ inputs.image_tag }}"
+        fi
+
+        docker build -t $IMAGE -f ${{ inputs.dockerfile }} .
+        docker push $IMAGE
+        echo "image=$IMAGE" >> $GITHUB_OUTPUT
+        echo "**Image:** \`$IMAGE\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Deploy to Cloud Run
+      if: inputs.deploy_target == 'cloudrun'
+      shell: bash
+      run: |
+        echo '${{ inputs.gcp_credentials }}' | gcloud auth activate-service-account --key-file=-
+        gcloud config set project ${{ inputs.gcp_project }}
+        gcloud run deploy ${{ inputs.service_name }} \
+          --image ${{ steps.push.outputs.image }} \
+          --region ${{ inputs.gcp_region }} \
+          --platform managed \
+          --quiet
+        echo "**Deployed to Cloud Run** (${{ inputs.gcp_region }})" >> $GITHUB_STEP_SUMMARY
+
+    - name: Deploy to K8s
+      if: inputs.deploy_target == 'k8s'
+      shell: bash
+      run: |
+        kubectl set image deployment/${{ inputs.k8s_deployment }} \
+          ${{ inputs.service_name }}=${{ steps.push.outputs.image }} \
+          -n ${{ inputs.k8s_namespace }}
+        kubectl rollout status deployment/${{ inputs.k8s_deployment }} \
+          -n ${{ inputs.k8s_namespace }} --timeout=120s
+        echo "**Deployed to K8s** (${{ inputs.k8s_namespace }})" >> $GITHUB_STEP_SUMMARY

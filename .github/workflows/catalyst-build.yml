@@ -34,7 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
       id-token: write       # for attestation
       attestations: write   # for provenance
 
@@ -48,13 +47,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Version
         id: version
@@ -81,10 +73,8 @@ jobs:
           TAGS="${TAGS},${IMAGE}:${VER}"
           TAGS="${TAGS},${IMAGE}:${DATE}"
           TAGS="${TAGS},${IMAGE}:sha-${SHA}"
-          TAGS="${TAGS},ghcr.io/${IMAGE}:latest"
-          TAGS="${TAGS},ghcr.io/${IMAGE}:${VER}"
 
-          [ -n "$CUSTOM" ] && TAGS="${TAGS},${IMAGE}:${CUSTOM},ghcr.io/${IMAGE}:${CUSTOM}"
+          [ -n "$CUSTOM" ] && TAGS="${TAGS},${IMAGE}:${CUSTOM}"
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
           echo "version=$VER" >> $GITHUB_OUTPUT

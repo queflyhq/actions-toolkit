@@ -1,0 +1,59 @@
+name: Go Test
+description: Run Go tests with coverage. Assumes Go is pre-installed (Catalyst runner).
+
+inputs:
+  working_directory:
+    description: 'Directory containing go.mod'
+    required: false
+    default: '.'
+  coverage_threshold:
+    description: 'Minimum coverage % (0 to skip)'
+    required: false
+    default: '0'
+  goprivate:
+    description: 'GOPRIVATE pattern'
+    required: false
+    default: ''
+  race:
+    description: 'Enable race detector'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v go >/dev/null 2>&1 || { echo "::error::Go is not installed. Use queflyhq/catalyst runner or install Go."; exit 1; }
+        echo "Go $(go version | awk '{print $3}')"
+
+    - name: Configure
+      shell: bash
+      run: |
+        [ -n "${{ inputs.goprivate }}" ] && go env -w GOPRIVATE="${{ inputs.goprivate }}"
+        [ -n "${{ inputs.goprivate }}" ] && git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Test
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        RACE_FLAG=""
+        [ "${{ inputs.race }}" = "true" ] && RACE_FLAG="-race"
+        go test -v $RACE_FLAG -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
+        echo "### Go Test Results" >> $GITHUB_STEP_SUMMARY
+        tail -3 test-output.txt >> $GITHUB_STEP_SUMMARY
+
+    - name: Coverage check
+      if: inputs.coverage_threshold != '0'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        COV=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "**Coverage: ${COV}%**" >> $GITHUB_STEP_SUMMARY
+        if (( $(echo "$COV < ${{ inputs.coverage_threshold }}" | bc -l) )); then
+          echo "::error::Coverage ${COV}% below threshold ${{ inputs.coverage_threshold }}%"
+          exit 1
+        fi

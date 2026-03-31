@@ -1,0 +1,74 @@
+name: Kubernetes Deploy
+description: Deploy to K8s via kubectl or kustomize. Assumes kubectl is pre-installed.
+
+inputs:
+  deployment:
+    description: 'Deployment name'
+    required: true
+  container:
+    description: 'Container name in the deployment'
+    required: true
+  image:
+    description: 'Full image reference'
+    required: true
+  namespace:
+    description: 'K8s namespace'
+    required: false
+    default: 'default'
+  kubeconfig:
+    description: 'Kubeconfig content (base64)'
+    required: false
+  timeout:
+    description: 'Rollout timeout'
+    required: false
+    default: '120s'
+  strategy:
+    description: 'Deploy strategy: set-image, apply, kustomize'
+    required: false
+    default: 'set-image'
+  manifest:
+    description: 'Manifest path (for apply/kustomize strategy)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v kubectl >/dev/null 2>&1 || { echo "::error::kubectl is not installed. Use queflyhq/catalyst runner or install kubectl."; exit 1; }
+        [ "${{ inputs.strategy }}" = "kustomize" ] && { command -v kustomize >/dev/null 2>&1 || { echo "::error::kustomize is not installed."; exit 1; }; }
+        echo "kubectl $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+
+    - name: Configure kubeconfig
+      if: inputs.kubeconfig != ''
+      shell: bash
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ inputs.kubeconfig }}" | base64 -d > ~/.kube/config
+
+    - name: Deploy
+      shell: bash
+      run: |
+        if [ "${{ inputs.strategy }}" = "apply" ]; then
+          kubectl apply -f ${{ inputs.manifest }} -n ${{ inputs.namespace }}
+        elif [ "${{ inputs.strategy }}" = "kustomize" ]; then
+          cd ${{ inputs.manifest }}
+          kustomize edit set image ${{ inputs.container }}=${{ inputs.image }}
+          kustomize build | kubectl apply -n ${{ inputs.namespace }} -f -
+        else
+          kubectl set image deployment/${{ inputs.deployment }} \
+            ${{ inputs.container }}=${{ inputs.image }} \
+            -n ${{ inputs.namespace }}
+        fi
+
+    - name: Wait for rollout
+      shell: bash
+      run: |
+        kubectl rollout status deployment/${{ inputs.deployment }} \
+          -n ${{ inputs.namespace }} --timeout=${{ inputs.timeout }}
+        echo "### K8s Deploy" >> $GITHUB_STEP_SUMMARY
+        echo "**Deployment:** ${{ inputs.deployment }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** \`${{ inputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "**Namespace:** ${{ inputs.namespace }}" >> $GITHUB_STEP_SUMMARY

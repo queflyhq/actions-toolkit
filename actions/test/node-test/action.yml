@@ -1,0 +1,35 @@
+name: Node.js Test
+description: Run Node.js tests. Assumes Node is pre-installed (Catalyst runner).
+
+inputs:
+  working_directory:
+    description: 'Directory containing package.json'
+    required: false
+    default: '.'
+  test_command:
+    description: 'Test command'
+    required: false
+    default: 'npm test'
+  install_command:
+    description: 'Install command'
+    required: false
+    default: 'npm ci'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v node >/dev/null 2>&1 || { echo "::error::Node.js is not installed. Use queflyhq/catalyst runner or install Node.js."; exit 1; }
+        echo "Node $(node --version), npm $(npm --version)"
+
+    - name: Install
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: ${{ inputs.install_command }}
+
+    - name: Test
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: ${{ inputs.test_command }}

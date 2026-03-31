@@ -1,0 +1,70 @@
+name: Cloud Run Deploy
+description: Deploy container image to GCP Cloud Run. Assumes gcloud is pre-installed.
+
+inputs:
+  service:
+    description: 'Cloud Run service name'
+    required: true
+  image:
+    description: 'Full image reference (org/name:tag)'
+    required: true
+  region:
+    description: 'GCP region'
+    required: false
+    default: 'asia-south1'
+  project:
+    description: 'GCP project ID'
+    required: true
+  credentials:
+    description: 'GCP service account key JSON (base64 or raw)'
+    required: true
+  env_vars:
+    description: 'Env vars (KEY=VAL,KEY2=VAL2)'
+    required: false
+    default: ''
+  min_instances:
+    description: 'Min instances'
+    required: false
+    default: '0'
+  max_instances:
+    description: 'Max instances'
+    required: false
+    default: '10'
+  memory:
+    description: 'Memory (e.g. 512Mi, 1Gi)'
+    required: false
+    default: '512Mi'
+  cpu:
+    description: 'CPU (e.g. 1, 2)'
+    required: false
+    default: '1'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v gcloud >/dev/null 2>&1 || { echo "::error::gcloud CLI is not installed. Use queflyhq/catalyst runner or install gcloud."; exit 1; }
+        command -v docker >/dev/null 2>&1 || { echo "::error::Docker CLI is not installed."; exit 1; }
+
+    - name: Authenticate
+      shell: bash
+      run: |
+        echo '${{ inputs.credentials }}' | gcloud auth activate-service-account --key-file=-
+        gcloud config set project ${{ inputs.project }}
+
+    - name: Deploy
+      shell: bash
+      run: |
+        ARGS="--image ${{ inputs.image }} --region ${{ inputs.region }} --platform managed --quiet"
+        ARGS="$ARGS --min-instances ${{ inputs.min_instances }} --max-instances ${{ inputs.max_instances }}"
+        ARGS="$ARGS --memory ${{ inputs.memory }} --cpu ${{ inputs.cpu }}"
+        [ -n "${{ inputs.env_vars }}" ] && ARGS="$ARGS --set-env-vars=${{ inputs.env_vars }}"
+
+        gcloud run deploy ${{ inputs.service }} $ARGS
+
+        URL=$(gcloud run services describe ${{ inputs.service }} --region ${{ inputs.region }} --format='value(status.url)')
+        echo "### Deployed to Cloud Run" >> $GITHUB_STEP_SUMMARY
+        echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+        echo "**URL:** $URL" >> $GITHUB_STEP_SUMMARY

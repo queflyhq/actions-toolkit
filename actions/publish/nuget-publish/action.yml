@@ -1,0 +1,27 @@
+name: NuGet Publish
+description: Publish .NET package to NuGet.
+
+inputs:
+  api_key:
+    description: 'NuGet API key'
+    required: true
+  working_directory:
+    description: 'Directory containing .csproj'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v dotnet >/dev/null 2>&1 || { echo "::error::.NET SDK is not installed."; exit 1; }
+
+    - name: Pack and publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        dotnet pack -c Release
+        dotnet nuget push **/*.nupkg --api-key ${{ inputs.api_key }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        echo "### Published to NuGet" >> $GITHUB_STEP_SUMMARY

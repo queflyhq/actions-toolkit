@@ -1,0 +1,39 @@
+name: npm Publish
+description: Publish package to npm registry.
+
+inputs:
+  token:
+    description: 'npm auth token'
+    required: true
+  working_directory:
+    description: 'Directory containing package.json'
+    required: false
+    default: '.'
+  access:
+    description: 'Package access: public or restricted'
+    required: false
+    default: 'public'
+  tag:
+    description: 'npm dist-tag (latest, beta, etc.)'
+    required: false
+    default: 'latest'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v node >/dev/null 2>&1 || { echo "::error::Node.js is not installed."; exit 1; }
+        command -v npm >/dev/null 2>&1 || { echo "::error::npm is not installed."; exit 1; }
+
+    - name: Publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "//registry.npmjs.org/:_authToken=${{ inputs.token }}" > .npmrc
+        npm publish --access ${{ inputs.access }} --tag ${{ inputs.tag }}
+        PKG=$(node -p "require('./package.json').name")
+        VER=$(node -p "require('./package.json').version")
+        echo "### Published to npm" >> $GITHUB_STEP_SUMMARY
+        echo "**Package:** \`${PKG}@${VER}\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,28 @@
+name: PyPI Publish
+description: Publish package to PyPI.
+
+inputs:
+  token:
+    description: 'PyPI API token'
+    required: true
+  working_directory:
+    description: 'Directory containing setup.py or pyproject.toml'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v python3 >/dev/null 2>&1 || { echo "::error::Python is not installed."; exit 1; }
+        pip install build twine
+
+    - name: Build and publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        python -m build
+        twine upload dist/* -u __token__ -p ${{ inputs.token }}
+        echo "### Published to PyPI" >> $GITHUB_STEP_SUMMARY

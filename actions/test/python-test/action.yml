@@ -1,0 +1,41 @@
+name: Python Test
+description: Run Python tests. Assumes Python is pre-installed (Catalyst runner).
+
+inputs:
+  working_directory:
+    description: 'Directory containing tests'
+    required: false
+    default: '.'
+  test_command:
+    description: 'Test command'
+    required: false
+    default: 'auto'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || { echo "::error::Python is not installed. Use queflyhq/catalyst runner or install Python."; exit 1; }
+        python3 --version 2>/dev/null || python --version
+
+    - name: Install deps
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        [ -f requirements.txt ] && pip install -r requirements.txt
+        [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt
+        pip install pytest 2>/dev/null || true
+
+    - name: Test
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ "${{ inputs.test_command }}" != "auto" ]; then
+          ${{ inputs.test_command }}
+        elif [ -f pytest.ini ] || [ -f pyproject.toml ]; then
+          python -m pytest -v
+        else
+          python -m unittest discover -v
+        fi

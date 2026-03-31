@@ -1,89 +1,116 @@
-# Reusable workflow: SDK publish on tag
-# Usage in any SDK repo:
+# Reusable pipeline: SDK multi-publish on tag
+# test → publish to all configured registries → GitHub Release
 #
-# jobs:
-#   publish:
-#     uses: queflyhq/actions-toolkit/.github/workflows/sdk-publish.yml@main
-#     with:
-#       language: node
-#     secrets: inherit
+# Usage:
+#   jobs:
+#     publish:
+#       uses: queflyhq/actions-toolkit/.github/workflows/sdk-publish.yml@main
+#       with:
+#         language: node          # or python, java, go, dotnet, ruby, php
+#         publish_npm: true
+#         publish_github: true
+#       secrets: inherit
 
-name: SDK Publish
+name: SDK Publish Pipeline
 
 on:
   workflow_call:
     inputs:
       language:
-        description: 'SDK language: node, python, java, go, dotnet, ruby, php'
         required: true
         type: string
-    secrets:
-      NPM_TOKEN:
+      working_directory:
         required: false
-      PYPI_TOKEN:
+        type: string
+        default: '.'
+      publish_npm:
         required: false
-      MAVEN_USERNAME:
+        type: boolean
+        default: false
+      publish_pypi:
         required: false
-      MAVEN_PASSWORD:
+        type: boolean
+        default: false
+      publish_maven:
         required: false
-      NUGET_API_KEY:
+        type: boolean
+        default: false
+      publish_nuget:
         required: false
-      RUBYGEMS_API_KEY:
+        type: boolean
+        default: false
+      publish_rubygems:
         required: false
+        type: boolean
+        default: false
+      publish_github:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
+  test:
+    runs-on: k8s-runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: queflyhq/actions-toolkit/actions/test/go-test@main
+        if: inputs.language == 'go'
+
+      - uses: queflyhq/actions-toolkit/actions/test/node-test@main
+        if: inputs.language == 'node'
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+      - uses: queflyhq/actions-toolkit/actions/test/java-test@main
+        if: inputs.language == 'java'
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+      - uses: queflyhq/actions-toolkit/actions/test/python-test@main
+        if: inputs.language == 'python'
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
   publish:
-    runs-on: ubuntu-latest
+    needs: test
+    runs-on: k8s-runner
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
 
-      # Node.js → npm
-      - name: Publish to npm
-        if: inputs.language == 'node'
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
-          npm publish --access public
+      - uses: queflyhq/actions-toolkit/actions/publish/npm-publish@main
+        if: inputs.publish_npm
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          working_directory: ${{ inputs.working_directory }}
 
-      # Python → PyPI
-      - name: Publish to PyPI
-        if: inputs.language == 'python'
-        run: |
-          pip install build twine
-          python -m build
-          twine upload dist/* -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+      - uses: queflyhq/actions-toolkit/actions/publish/pypi-publish@main
+        if: inputs.publish_pypi
+        with:
+          token: ${{ secrets.PYPI_TOKEN }}
+          working_directory: ${{ inputs.working_directory }}
 
-      # Go → just tag (go modules auto-resolve from GitHub)
-      - name: Tag Go module
-        if: inputs.language == 'go'
-        run: echo "Go module tagged at ${GITHUB_REF_NAME} — available via go get"
+      - uses: queflyhq/actions-toolkit/actions/publish/maven-publish@main
+        if: inputs.publish_maven
+        with:
+          server_username: ${{ secrets.MAVEN_USERNAME }}
+          server_password: ${{ secrets.MAVEN_PASSWORD }}
+          working_directory: ${{ inputs.working_directory }}
 
-      # Java → Maven Central
-      - name: Publish to Maven
-        if: inputs.language == 'java'
-        run: mvn deploy -DskipTests
-        env:
-          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+      - uses: queflyhq/actions-toolkit/actions/publish/nuget-publish@main
+        if: inputs.publish_nuget
+        with:
+          api_key: ${{ secrets.NUGET_API_KEY }}
+          working_directory: ${{ inputs.working_directory }}
 
-      # .NET → NuGet
-      - name: Publish to NuGet
-        if: inputs.language == 'dotnet'
-        run: |
-          dotnet pack -c Release
-          dotnet nuget push **/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+      - uses: queflyhq/actions-toolkit/actions/publish/rubygems-publish@main
+        if: inputs.publish_rubygems
+        with:
+          api_key: ${{ secrets.RUBYGEMS_API_KEY }}
+          working_directory: ${{ inputs.working_directory }}
 
-      # Ruby → RubyGems
-      - name: Publish to RubyGems
-        if: inputs.language == 'ruby'
-        run: |
-          mkdir -p ~/.gem
-          echo ":rubygems_api_key: ${{ secrets.RUBYGEMS_API_KEY }}" > ~/.gem/credentials
-          chmod 0600 ~/.gem/credentials
-          gem build *.gemspec
-          gem push *.gem
-
-      # PHP → Packagist (auto-updates from GitHub webhook)
-      - name: Publish to Packagist
-        if: inputs.language == 'php'
-        run: echo "Packagist auto-updates from GitHub tags"
+      - uses: queflyhq/actions-toolkit/actions/github-release@main
+        if: inputs.publish_github
+        with:
+          tag: ${{ github.ref_name }}

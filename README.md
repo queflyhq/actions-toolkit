@@ -1,110 +1,170 @@
-# Centralized CI/CD Module for GitHub
+# Quefly Actions Toolkit
 
-Shared reusable workflows, composite actions, and runner infrastructure for all microservices.
+Generic CI/CD framework for GitHub Actions. Composable building blocks that work with any language, any registry, any deploy target.
 
-## Repository Structure
+## Architecture
 
 ```
-shared-devops/
+actions-toolkit/
+├── actions/                    ← Composite actions (building blocks)
+│   ├── setup/                  ← Language & tool setup
+│   │   ├── go/                 ← Set up Go + private modules
+│   │   ├── node/               ← Set up Node.js + cache
+│   │   ├── java/               ← Set up Java + Maven
+│   │   └── python/             ← Set up Python + pip
+│   │
+│   ├── test/                   ← Test runners
+│   │   ├── go-test/            ← Go test + coverage
+│   │   ├── node-test/          ← npm test / vitest / jest
+│   │   ├── java-test/          ← mvn test
+│   │   └── python-test/        ← pytest
+│   │
+│   ├── build/                  ← Build artifacts
+│   │   ├── docker-build/       ← Docker build + push (DinD)
+│   │   ├── kaniko-build/       ← Kaniko build (daemonless)
+│   │   └── sveltekit-build/    ← SvelteKit static build
+│   │
+│   ├── publish/                ← Package registry publish
+│   │   ├── npm-publish/        ← npm registry
+│   │   ├── pypi-publish/       ← PyPI
+│   │   ├── maven-publish/      ← Maven Central
+│   │   ├── nuget-publish/      ← NuGet
+│   │   ├── rubygems-publish/   ← RubyGems
+│   │   ├── helm-publish/       ← Helm OCI push
+│   │   └── github-release/     ← Git tag + changelog + release
+│   │
+│   ├── deploy/                 ← Deploy targets
+│   │   ├── cloudrun-deploy/    ← GCP Cloud Run
+│   │   ├── k8s-deploy/         ← kubectl set image
+│   │   ├── helm-deploy/        ← Helm upgrade
+│   │   └── cloudflare-deploy/  ← Cloudflare Pages / Workers
+│   │
+│   ├── security/               ← Security scanning
+│   │   ├── docker-scout/       ← Docker Scout CVE scan
+│   │   └── trivy-scan/         ← Trivy vulnerability scan
+│   │
+│   └── version/                ← Versioning
+│       └── semantic-version/   ← Semver from git tags + commits
 │
-├── .github/workflows/
-│   └── build-and-deploy.yml                # Orchestrator workflow (calls actions below)
-│
-├── actions/
-│   ├── semantic-version/action.yml     # Auto version from git tags + commit messages
-│   ├── docker-build/action.yml         # Build & push Docker image (DinD)
-│   ├── kaniko-build/action.yml         # Build & push Docker image (daemonless)
-│   ├── github-release/action.yml       # Git tag + changelog + GitHub Release
-│   └── helm-deploy/action.yml          # Deploy to Kubernetes via Helm OCI chart
+├── pipelines/                  ← Pre-built pipelines (combine actions)
+│   ├── go-service.yml          ← test → build → push → deploy
+│   ├── sveltekit-app.yml       ← build → deploy to Cloudflare
+│   ├── sdk-publish.yml         ← test → publish to registry
+│   └── helm-release.yml        ← package → push OCI → deploy
 │
 ├── runner/
-│   └── Dockerfile                      # Custom ARC runner image
+│   └── Dockerfile              ← Custom ARC runner with all tools
 │
 └── README.md
 ```
 
 ## Usage
 
-Each service repo needs only a thin caller workflow (~25 lines):
+### Option 1: Use a pre-built pipeline (simplest)
 
 ```yaml
-# .github/workflows/docker-build.yml
-name: Build, Release & Deploy
-
-on:
-  push:
-    branches: [main]
-    paths: ['src/**', 'pom.xml', 'Dockerfile', 'helm/**']
-  workflow_dispatch:
-    inputs:
-      version_bump:
-        type: choice
-        options: [patch, minor, major]
-
+# In your service repo: .github/workflows/ci.yml
 jobs:
-  deploy:
-    uses: queflyhq/shared-devops/.github/workflows/build-and-deploy.yml@main
+  ci:
+    uses: queflyhq/actions-toolkit/.github/workflows/go-service.yml@main
     with:
-      image_name: my-service
-      helm_release_name: my-service
-      k8s_namespace: my-service
-      registry_org: my-dockerhub-org
-      vault_addr: https://vault.example.com
-      helm_chart: oci://registry-1.docker.io/my-org/my-chart
-      helm_chart_version: '1.0.0'
-    permissions:
-      contents: write
-      id-token: write
+      service_name: my-service
+      deploy_target: cloudrun
+    secrets: inherit
 ```
 
-## Workflow Inputs
+### Option 2: Compose your own pipeline from building blocks
 
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `image_name` | Yes | — | Docker Hub image name |
-| `helm_release_name` | Yes | — | Helm release name |
-| `k8s_namespace` | Yes | — | Kubernetes namespace |
-| `build_command` | No | `mvn clean package -DskipTests -B` | Build command |
-| `skip_build` | No | `false` | Skip build (config-only services) |
-| `scout_enabled` | No | `true` | Run Docker Scout vulnerability scan |
-| `scout_severities` | No | `critical,high` | Severity levels to report |
-| `skip_deploy` | No | `false` | Skip deploy (build-only) |
-| `registry_org` | Yes | — | Docker registry org/namespace |
-| `vault_addr` | Yes | — | HashiCorp Vault URL |
-| `helm_chart` | Yes | — | OCI Helm chart reference |
-| `helm_chart_version` | Yes | — | Helm chart version |
-| `version_bump` | No | auto-detect | `patch` / `minor` / `major` |
-| `health_check_path` | No | — | Health endpoint (e.g. `/actuator/health`) |
-| `health_check_port` | No | `8080` | Container port |
-| `runs_on` | No | `k8s-runner` | GitHub Actions runner label |
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/test/go-test@main
 
-## Pipeline
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/version/semantic-version@main
+        id: version
+      - uses: queflyhq/actions-toolkit/actions/build/docker-build@main
+        with:
+          image_name: my-service
+          image_tag: ${{ steps.version.outputs.version }}
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/cloudrun-deploy@main
+        with:
+          service: my-service
+          image: queflyhq/my-service:${{ needs.build.outputs.image_tag }}
 ```
-┌─────────────────────────────────────────────┐     ┌──────────────────────────────────┐
-│  BUILD JOB                                  │     │  DEPLOY JOB                      │
-│  Checkout → Version → Compile → Docker Push │ ──► │  Vault → Helm Upgrade → Verify   │
-│  → GitHub Release                           │     │  → Health Check                  │
-└─────────────────────────────────────────────┘     └──────────────────────────────────┘
+
+### Option 3: SDK multi-publish
+
+```yaml
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/publish/npm-publish@main
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+      - uses: queflyhq/actions-toolkit/actions/publish/github-release@main
 ```
 
-| Stage | Job | Description |
-|-------|-----|-------------|
-| **Version** | build | Semver from git tags + conventional commits |
-| **Compile** | build | Maven/npm with dependency caching |
-| **Docker** | build | Build & push container image (DinD) |
-| **Scout** | build | Docker Scout vulnerability scan (critical/high) |
-| **Release** | build | Git tag + changelog + GitHub Release |
-| **Deploy** | deploy | Helm upgrade + rollout verify + health check |
+## Pre-built Pipelines
+
+| Pipeline | For | What it does |
+|----------|-----|-------------|
+| `go-service.yml` | Go microservices | test → version → docker build → push → deploy (Cloud Run / K8s) |
+| `sveltekit-app.yml` | SvelteKit apps | install → build → deploy to Cloudflare Pages |
+| `sdk-publish.yml` | Any SDK | test → publish to package registry on tag |
+| `helm-release.yml` | Helm charts | package → push OCI → deploy |
 
 ## Composite Actions
 
-Each action can also be used independently in custom workflows:
+Every action is independent. Mix and match:
 
-```yaml
-- uses: queflyhq/shared-devops/actions/semantic-version@main
-- uses: queflyhq/shared-devops/actions/docker-build@main
-- uses: queflyhq/shared-devops/actions/kaniko-build@main
-- uses: queflyhq/shared-devops/actions/github-release@main
-- uses: queflyhq/shared-devops/actions/helm-deploy@main
+| Category | Action | Description |
+|----------|--------|-------------|
+| **Setup** | `setup/go` | Go + GOPRIVATE + module cache |
+| | `setup/node` | Node.js + npm cache |
+| | `setup/java` | Java + Maven cache |
+| | `setup/python` | Python + pip cache |
+| **Test** | `test/go-test` | `go test -race -cover` |
+| | `test/node-test` | `npm test` |
+| | `test/java-test` | `mvn test` |
+| | `test/python-test` | `pytest` |
+| **Build** | `build/docker-build` | Docker build + push |
+| | `build/kaniko-build` | Kaniko daemonless build |
+| | `build/sveltekit-build` | SvelteKit static build |
+| **Publish** | `publish/npm-publish` | Publish to npm |
+| | `publish/pypi-publish` | Publish to PyPI |
+| | `publish/maven-publish` | Publish to Maven Central |
+| | `publish/nuget-publish` | Publish to NuGet |
+| | `publish/rubygems-publish` | Publish to RubyGems |
+| | `publish/helm-publish` | Push Helm chart as OCI |
+| | `publish/github-release` | Git tag + GitHub Release |
+| **Deploy** | `deploy/cloudrun-deploy` | GCP Cloud Run |
+| | `deploy/k8s-deploy` | kubectl rolling update |
+| | `deploy/helm-deploy` | Helm upgrade |
+| | `deploy/cloudflare-deploy` | Cloudflare Pages / Workers |
+| **Security** | `security/docker-scout` | Docker Scout CVE scan |
+| | `security/trivy-scan` | Trivy scan |
+| **Version** | `version/semantic-version` | Semver from git history |
+
+## Custom Runner
+
+`runner/Dockerfile` — extends the official ARC runner with:
+Go, Java 25, Maven, Node.js 20, Python 3, Docker CLI, Helm, kubectl, AWS CLI, gcloud, Terraform, Vault, ArgoCD, Kustomize, Kaniko, GitHub CLI.
+
+```bash
+docker build -t queflyhq/devops-runner:latest runner/
 ```

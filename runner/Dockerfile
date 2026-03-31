@@ -1,9 +1,14 @@
 # =============================================================================
-# Ayush CI/CD Runner — extends official ARC runner with all build tools
-# Public image: queflyhq/devops-runner:latest
+# Catalyst — universal CI/CD runner with every build tool pre-installed
+# Public image: queflyhq/catalyst:latest
 #
-# Usage in GitHub Actions (NO container: directive needed):
-#   runs-on: k8s-runner
+# Self-hosted (ARC on K8s):  runs-on: k8s-runner
+# Container job:             container: queflyhq/catalyst:latest
+# Local dev:                 docker run -it queflyhq/catalyst bash
+#
+# Includes: Go, Java 25, Maven, Node 20, Python 3, Docker CLI, Helm 3,
+# kubectl, AWS CLI, gcloud, Terraform, Vault, ArgoCD, Kustomize, Kaniko,
+# GitHub CLI, GitLab CLI, Terragrunt, yq, jq
 # =============================================================================
 FROM ghcr.io/actions/actions-runner:latest
 

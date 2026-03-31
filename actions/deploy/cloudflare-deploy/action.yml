@@ -1,0 +1,50 @@
+name: Cloudflare Deploy
+description: Deploy to Cloudflare Pages or Workers.
+
+inputs:
+  type:
+    description: 'pages or worker'
+    required: false
+    default: 'pages'
+  project:
+    description: 'Cloudflare Pages project name or Worker name'
+    required: true
+  directory:
+    description: 'Build output directory (for Pages)'
+    required: false
+    default: 'build'
+  account_id:
+    description: 'Cloudflare account ID'
+    required: true
+  api_token:
+    description: 'Cloudflare API token'
+    required: true
+  wrangler_config:
+    description: 'Path to wrangler.toml (for Workers)'
+    required: false
+    default: 'wrangler.toml'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v npx >/dev/null 2>&1 || { echo "::error::npx/Node.js is not installed."; exit 1; }
+
+    - name: Deploy
+      shell: bash
+      run: |
+        if [ "${{ inputs.type }}" = "worker" ]; then
+          npx wrangler deploy --config ${{ inputs.wrangler_config }}
+        else
+          npx wrangler pages deploy ${{ inputs.directory }} \
+            --project-name=${{ inputs.project }} \
+            --branch=${GITHUB_REF_NAME}
+        fi
+        echo "### Cloudflare Deploy" >> $GITHUB_STEP_SUMMARY
+        echo "**Type:** ${{ inputs.type }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Project:** ${{ inputs.project }}" >> $GITHUB_STEP_SUMMARY
+      env:
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.account_id }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.api_token }}

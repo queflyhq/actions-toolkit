@@ -1,0 +1,121 @@
+# Build and publish Catalyst runner images to Docker Hub + GHCR
+#
+# Tags:
+#   queflyhq/catalyst:latest          — latest everything
+#   queflyhq/catalyst:2024.03.31      — date-stamped
+#   queflyhq/catalyst:java-21         — specific Java version
+#   queflyhq/catalyst:java-25         — specific Java version
+#   queflyhq/catalyst:slim            — no cloud CLIs (smaller image)
+#
+# Anyone can use:
+#   docker pull queflyhq/catalyst
+#   container: queflyhq/catalyst:latest
+
+name: Build Catalyst
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'runner/**'
+      - '.github/workflows/catalyst-build.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Custom tag (optional)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+
+env:
+  IMAGE: queflyhq/catalyst
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - java: 25
+            go: 1.25.0
+            node: 20
+            kubectl: 1.35.0
+            suffix: latest
+          - java: 21
+            go: 1.23.6
+            node: 20
+            kubectl: 1.31.0
+            suffix: java-21
+          - java: 17
+            go: 1.22.0
+            node: 20
+            kubectl: 1.30.0
+            suffix: java-17
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate tags
+        id: tags
+        run: |
+          DATE=$(date +%Y.%m.%d)
+          SUFFIX="${{ matrix.suffix }}"
+          CUSTOM="${{ github.event.inputs.tag }}"
+
+          TAGS="${IMAGE}:${SUFFIX}"
+          TAGS="${TAGS},ghcr.io/${IMAGE}:${SUFFIX}"
+
+          if [ "$SUFFIX" = "latest" ]; then
+            TAGS="${TAGS},${IMAGE}:${DATE}"
+            TAGS="${TAGS},ghcr.io/${IMAGE}:${DATE}"
+          fi
+
+          if [ -n "$CUSTOM" ] && [ "$SUFFIX" = "latest" ]; then
+            TAGS="${TAGS},${IMAGE}:${CUSTOM}"
+          fi
+
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: runner
+          file: runner/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            JAVA_VERSION=${{ matrix.java }}
+            GO_VERSION=${{ matrix.go }}
+            KUBECTL_VERSION=${{ matrix.kubectl }}
+          cache-from: type=gha,scope=catalyst-${{ matrix.suffix }}
+          cache-to: type=gha,scope=catalyst-${{ matrix.suffix }},mode=max
+          platforms: linux/amd64
+
+      - name: Summary
+        run: |
+          echo "### Catalyst \`${{ matrix.suffix }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Java: ${{ matrix.java }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Go: ${{ matrix.go }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Node: ${{ matrix.node }}" >> $GITHUB_STEP_SUMMARY
+          echo "- kubectl: ${{ matrix.kubectl }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Tags: \`${{ steps.tags.outputs.tags }}\`" >> $GITHUB_STEP_SUMMARY

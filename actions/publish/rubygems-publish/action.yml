@@ -1,0 +1,30 @@
+name: RubyGems Publish
+description: Publish gem to RubyGems.
+
+inputs:
+  api_key:
+    description: 'RubyGems API key'
+    required: true
+  working_directory:
+    description: 'Directory containing .gemspec'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v gem >/dev/null 2>&1 || { echo "::error::Ruby/gem is not installed."; exit 1; }
+
+    - name: Build and publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        mkdir -p ~/.gem
+        echo ":rubygems_api_key: ${{ inputs.api_key }}" > ~/.gem/credentials
+        chmod 0600 ~/.gem/credentials
+        gem build *.gemspec
+        gem push *.gem
+        echo "### Published to RubyGems" >> $GITHUB_STEP_SUMMARY

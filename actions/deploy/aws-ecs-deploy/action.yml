@@ -1,0 +1,84 @@
+name: AWS ECS Deploy
+description: Deploy container to AWS ECS (Fargate or EC2).
+
+inputs:
+  cluster:
+    description: 'ECS cluster name'
+    required: true
+  service:
+    description: 'ECS service name'
+    required: true
+  image:
+    description: 'Full image reference'
+    required: true
+  container:
+    description: 'Container name in task definition'
+    required: true
+  task_definition:
+    description: 'Task definition family name'
+    required: true
+  region:
+    description: 'AWS region'
+    required: false
+    default: 'us-east-1'
+  aws_access_key_id:
+    description: 'AWS access key'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS secret key'
+    required: true
+  wait:
+    description: 'Wait for service stability'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v aws >/dev/null 2>&1 || { echo "::error::AWS CLI is not installed."; exit 1; }
+        command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed."; exit 1; }
+
+    - name: Configure AWS
+      shell: bash
+      run: |
+        aws configure set aws_access_key_id ${{ inputs.aws_access_key_id }}
+        aws configure set aws_secret_access_key ${{ inputs.aws_secret_access_key }}
+        aws configure set region ${{ inputs.region }}
+
+    - name: Update task definition and deploy
+      shell: bash
+      run: |
+        # Get current task def
+        TASK_DEF=$(aws ecs describe-task-definition --task-definition ${{ inputs.task_definition }} --region ${{ inputs.region }})
+
+        # Update image in container
+        NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ inputs.image }}" --arg CONTAINER "${{ inputs.container }}" \
+          '.taskDefinition | .containerDefinitions = [.containerDefinitions[] | if .name == $CONTAINER then .image = $IMAGE else . end] | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+        # Register new task def
+        NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --region ${{ inputs.region }} | jq -r '.taskDefinition.taskDefinitionArn')
+
+        # Update service
+        aws ecs update-service \
+          --cluster ${{ inputs.cluster }} \
+          --service ${{ inputs.service }} \
+          --task-definition $NEW_ARN \
+          --region ${{ inputs.region }}
+
+        echo "### ECS Deploy" >> $GITHUB_STEP_SUMMARY
+        echo "**Cluster:** ${{ inputs.cluster }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** \`${{ inputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Wait for stability
+      if: inputs.wait == 'true'
+      shell: bash
+      run: |
+        aws ecs wait services-stable \
+          --cluster ${{ inputs.cluster }} \
+          --services ${{ inputs.service }} \
+          --region ${{ inputs.region }}
+        echo "**Status:** Stable" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,47 @@
+name: Maven Publish
+description: Publish to Maven Central or any Maven repository.
+
+inputs:
+  working_directory:
+    description: 'Directory containing pom.xml'
+    required: false
+    default: '.'
+  server_username:
+    description: 'Maven server username'
+    required: true
+  server_password:
+    description: 'Maven server password/token'
+    required: true
+  gpg_key:
+    description: 'GPG private key (base64, for signing)'
+    required: false
+    default: ''
+  gpg_passphrase:
+    description: 'GPG passphrase'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v java >/dev/null 2>&1 || { echo "::error::Java is not installed."; exit 1; }
+        command -v mvn >/dev/null 2>&1 || { echo "::error::Maven is not installed."; exit 1; }
+
+    - name: Import GPG key
+      if: inputs.gpg_key != ''
+      shell: bash
+      run: echo "${{ inputs.gpg_key }}" | base64 -d | gpg --import --batch
+
+    - name: Publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        mvn deploy -DskipTests -B \
+          -Dossrh.username="${{ inputs.server_username }}" \
+          -Dossrh.password="${{ inputs.server_password }}"
+        echo "### Published to Maven" >> $GITHUB_STEP_SUMMARY
+      env:
+        MAVEN_GPG_PASSPHRASE: ${{ inputs.gpg_passphrase }}

@@ -1,0 +1,36 @@
+name: Java Test
+description: Run Java tests via Maven or Gradle. Assumes Java is pre-installed (Catalyst runner).
+
+inputs:
+  working_directory:
+    description: 'Directory containing pom.xml or build.gradle'
+    required: false
+    default: '.'
+  build_tool:
+    description: 'maven or gradle'
+    required: false
+    default: 'maven'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v java >/dev/null 2>&1 || { echo "::error::Java is not installed. Use queflyhq/catalyst runner or install Java."; exit 1; }
+        if [ "${{ inputs.build_tool }}" = "gradle" ]; then
+          [ -f "${{ inputs.working_directory }}/gradlew" ] || { echo "::error::gradlew not found in ${{ inputs.working_directory }}"; exit 1; }
+        else
+          command -v mvn >/dev/null 2>&1 || { echo "::error::Maven is not installed. Use queflyhq/catalyst runner or install Maven."; exit 1; }
+        fi
+        echo "Java $(java --version 2>&1 | head -1)"
+
+    - name: Test
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ "${{ inputs.build_tool }}" = "gradle" ]; then
+          ./gradlew test
+        else
+          mvn test -B
+        fi

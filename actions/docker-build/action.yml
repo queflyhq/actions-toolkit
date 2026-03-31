@@ -34,6 +34,11 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v docker >/dev/null 2>&1 || { echo "::error::Docker is not installed. Use queflyhq/catalyst runner or install Docker."; exit 1; }
+
     - name: Wait for Docker daemon
       shell: bash
       run: |

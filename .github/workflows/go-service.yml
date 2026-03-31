@@ -1,0 +1,131 @@
+# Reusable pipeline: Go Service CI/CD
+# test → build → push → scan → deploy
+#
+# Usage:
+#   jobs:
+#     ci:
+#       uses: queflyhq/actions-toolkit/.github/workflows/go-service.yml@main
+#       with:
+#         service_name: my-service
+#         deploy_target: cloudrun  # or k8s, ssh, none
+#       secrets: inherit
+
+name: Go Service Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+      goprivate:
+        required: false
+        type: string
+        default: ''
+      dockerfile:
+        required: false
+        type: string
+        default: './Dockerfile'
+      registry_org:
+        required: false
+        type: string
+        default: 'queflyhq'
+      deploy_target:
+        description: 'cloudrun, k8s, ssh, or none'
+        required: false
+        type: string
+        default: 'none'
+      gcp_project:
+        required: false
+        type: string
+      gcp_region:
+        required: false
+        type: string
+        default: 'asia-south1'
+      k8s_namespace:
+        required: false
+        type: string
+        default: 'default'
+      ssh_host:
+        required: false
+        type: string
+      ssh_user:
+        required: false
+        type: string
+      ssh_commands:
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: k8s-runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/test/go-test@main
+        with:
+          goprivate: ${{ inputs.goprivate }}
+
+  build:
+    needs: test
+    runs-on: k8s-runner
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/docker-build@main
+        id: build
+        with:
+          image_name: ${{ inputs.service_name }}
+          image_tag: ${{ github.sha }}
+          registry_org: ${{ inputs.registry_org }}
+          registry_username: ${{ secrets.DOCKER_USERNAME }}
+          registry_token: ${{ secrets.DOCKER_TOKEN }}
+          dockerfile: ${{ inputs.dockerfile }}
+
+  scan:
+    needs: build
+    runs-on: k8s-runner
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/security/trivy-scan@main
+        with:
+          target: ${{ needs.build.outputs.image }}
+          exit_code: '0'
+
+  deploy-cloudrun:
+    needs: [build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'cloudrun'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/cloudrun-deploy@main
+        with:
+          service: ${{ inputs.service_name }}
+          image: ${{ needs.build.outputs.image }}
+          project: ${{ inputs.gcp_project }}
+          region: ${{ inputs.gcp_region }}
+          credentials: ${{ secrets.GCP_CREDENTIALS }}
+
+  deploy-k8s:
+    needs: [build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'k8s'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/k8s-deploy@main
+        with:
+          deployment: ${{ inputs.service_name }}
+          container: ${{ inputs.service_name }}
+          image: ${{ needs.build.outputs.image }}
+          namespace: ${{ inputs.k8s_namespace }}
+
+  deploy-ssh:
+    needs: [build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'ssh'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/ssh-deploy@main
+        with:
+          host: ${{ inputs.ssh_host }}
+          user: ${{ inputs.ssh_user }}
+          key: ${{ secrets.SSH_KEY }}
+          commands: ${{ inputs.ssh_commands }}

@@ -1,0 +1,60 @@
+# Reusable pipeline: SvelteKit App CI/CD
+# install → build → deploy to Cloudflare Pages
+#
+# Usage:
+#   jobs:
+#     ci:
+#       uses: queflyhq/actions-toolkit/.github/workflows/sveltekit-app.yml@main
+#       with:
+#         project: my-website
+#       secrets: inherit
+
+name: SvelteKit Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Cloudflare Pages project name'
+        required: true
+        type: string
+      build_command:
+        required: false
+        type: string
+        default: 'npm run build'
+      output_dir:
+        required: false
+        type: string
+        default: 'build'
+      deploy:
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build-deploy:
+    runs-on: k8s-runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight
+        shell: bash
+        run: |
+          command -v node >/dev/null 2>&1 || { echo "::error::Node.js is not installed."; exit 1; }
+          echo "Node $(node --version)"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: ${{ inputs.build_command }}
+
+      - name: Deploy
+        if: inputs.deploy && github.ref == 'refs/heads/main'
+        uses: queflyhq/actions-toolkit/actions/deploy/cloudflare-deploy@main
+        with:
+          type: pages
+          project: ${{ inputs.project }}
+          directory: ${{ inputs.output_dir }}
+          account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}

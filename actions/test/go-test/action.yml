@@ -49,7 +49,9 @@ runs:
     - name: Download dependencies
       shell: bash
       working-directory: ${{ inputs.working_directory }}
-      run: go mod download
+      run: |
+        go mod tidy
+        go mod download
 
     - name: Test
       shell: bash

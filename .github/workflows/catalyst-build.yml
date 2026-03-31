@@ -117,7 +117,6 @@ jobs:
           command: cves
           image: ${{ env.IMAGE }}:latest
           only-severities: critical,high
-          sarif-file: scout-results.sarif
 
       - name: Docker Scout — policy check
         uses: docker/scout-action@v1
@@ -135,12 +134,6 @@ jobs:
         with:
           command: recommendations
           image: ${{ env.IMAGE }}:latest
-
-      - name: Upload Scout SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: scout-results.sarif
 
       # --- Summary ---
       - name: Summary

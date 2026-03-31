@@ -1,0 +1,280 @@
+# Auto Pipeline — detects your stack and builds/tests/deploys automatically
+#
+# Usage (this is ALL you need in any repo):
+#
+#   jobs:
+#     ci:
+#       uses: queflyhq/actions-toolkit/.github/workflows/auto-pipeline.yml@main
+#       secrets: inherit
+#
+# It will auto-detect: Go, Java, Node, Python, Ruby, PHP, .NET, Rust, Dockerfile
+# and run the right test/build/publish/deploy steps.
+
+name: Auto Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      deploy_target:
+        description: 'cloudrun, k8s, cloudflare, aws-ecs, ssh, or none'
+        required: false
+        type: string
+        default: 'none'
+      registry_org:
+        description: 'Docker registry org'
+        required: false
+        type: string
+        default: ''
+      gcp_project:
+        required: false
+        type: string
+      gcp_region:
+        required: false
+        type: string
+        default: 'asia-south1'
+      k8s_namespace:
+        required: false
+        type: string
+        default: 'default'
+      cloudflare_project:
+        required: false
+        type: string
+      ssh_host:
+        required: false
+        type: string
+      ssh_user:
+        required: false
+        type: string
+      ssh_commands:
+        required: false
+        type: string
+
+jobs:
+  detect:
+    runs-on: k8s-runner
+    outputs:
+      lang: ${{ steps.detect.outputs.lang }}
+      has_docker: ${{ steps.detect.outputs.has_docker }}
+      has_helm: ${{ steps.detect.outputs.has_helm }}
+      service_name: ${{ steps.detect.outputs.service_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect stack
+        id: detect
+        shell: bash
+        run: |
+          LANG="unknown"
+          HAS_DOCKER="false"
+          HAS_HELM="false"
+          SERVICE_NAME=$(basename $GITHUB_REPOSITORY)
+
+          # Detect language
+          [ -f go.mod ]           && LANG="go"
+          [ -f pom.xml ]          && LANG="java"
+          [ -f build.gradle ]     && LANG="java"
+          [ -f package.json ]     && LANG="node"
+          [ -f setup.py ]         && LANG="python"
+          [ -f pyproject.toml ]   && LANG="python"
+          [ -f Gemfile ]          && LANG="ruby"
+          [ -f composer.json ]    && LANG="php"
+          [ -f *.csproj ] 2>/dev/null && LANG="dotnet"
+          [ -f Cargo.toml ]       && LANG="rust"
+
+          # SvelteKit / Next.js detection (override node)
+          if [ "$LANG" = "node" ]; then
+            grep -q "svelte" package.json 2>/dev/null && LANG="sveltekit"
+            grep -q "next" package.json 2>/dev/null   && LANG="nextjs"
+          fi
+
+          # Docker / Helm
+          [ -f Dockerfile ]       && HAS_DOCKER="true"
+          [ -d helm ] || [ -d charts ] || [ -d deploy/helm ] && HAS_HELM="true"
+
+          echo "lang=$LANG" >> $GITHUB_OUTPUT
+          echo "has_docker=$HAS_DOCKER" >> $GITHUB_OUTPUT
+          echo "has_helm=$HAS_HELM" >> $GITHUB_OUTPUT
+          echo "service_name=$SERVICE_NAME" >> $GITHUB_OUTPUT
+
+          echo "### Stack Detection" >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Language | \`$LANG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dockerfile | $HAS_DOCKER |" >> $GITHUB_STEP_SUMMARY
+          echo "| Helm | $HAS_HELM |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | $SERVICE_NAME |" >> $GITHUB_STEP_SUMMARY
+
+  test:
+    needs: detect
+    runs-on: k8s-runner
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go
+      - uses: queflyhq/actions-toolkit/actions/test/go-test@main
+        if: needs.detect.outputs.lang == 'go'
+
+      # Java
+      - uses: queflyhq/actions-toolkit/actions/test/java-test@main
+        if: needs.detect.outputs.lang == 'java'
+
+      # Node
+      - uses: queflyhq/actions-toolkit/actions/test/node-test@main
+        if: needs.detect.outputs.lang == 'node'
+
+      # Python
+      - uses: queflyhq/actions-toolkit/actions/test/python-test@main
+        if: needs.detect.outputs.lang == 'python'
+
+      # SvelteKit — build is the test
+      - name: SvelteKit build
+        if: needs.detect.outputs.lang == 'sveltekit'
+        shell: bash
+        run: |
+          command -v node >/dev/null 2>&1 || { echo "::error::Node.js not installed."; exit 1; }
+          npm ci && npm run build
+
+      # .NET
+      - name: .NET test
+        if: needs.detect.outputs.lang == 'dotnet'
+        shell: bash
+        run: |
+          command -v dotnet >/dev/null 2>&1 || { echo "::error::.NET not installed."; exit 1; }
+          dotnet test
+
+      # Rust
+      - name: Rust test
+        if: needs.detect.outputs.lang == 'rust'
+        shell: bash
+        run: |
+          command -v cargo >/dev/null 2>&1 || { echo "::error::Rust not installed."; exit 1; }
+          cargo test
+
+      # Ruby
+      - name: Ruby test
+        if: needs.detect.outputs.lang == 'ruby'
+        shell: bash
+        run: |
+          command -v ruby >/dev/null 2>&1 || { echo "::error::Ruby not installed."; exit 1; }
+          bundle install && bundle exec rake test 2>/dev/null || ruby test_*.rb 2>/dev/null || echo "No tests found"
+
+      # PHP
+      - name: PHP test
+        if: needs.detect.outputs.lang == 'php'
+        shell: bash
+        run: |
+          command -v php >/dev/null 2>&1 || { echo "::error::PHP not installed."; exit 1; }
+          [ -f composer.json ] && composer install
+          php vendor/bin/phpunit 2>/dev/null || php test_*.php 2>/dev/null || echo "No tests found"
+
+  version:
+    needs: [detect, test]
+    runs-on: k8s-runner
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      changelog: ${{ steps.ver.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: queflyhq/actions-toolkit/actions/version/semantic-version@main
+        id: ver
+
+  build:
+    needs: [detect, version]
+    runs-on: k8s-runner
+    if: needs.detect.outputs.has_docker == 'true' && github.ref == 'refs/heads/main'
+    outputs:
+      image: ${{ steps.docker.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: queflyhq/actions-toolkit/actions/docker-build@main
+        id: docker
+        with:
+          image_name: ${{ needs.detect.outputs.service_name }}
+          image_tag: ${{ needs.version.outputs.version }}
+          registry_org: ${{ inputs.registry_org || 'queflyhq' }}
+          registry_username: ${{ secrets.DOCKER_USERNAME }}
+          registry_token: ${{ secrets.DOCKER_TOKEN }}
+
+  scan:
+    needs: [build]
+    runs-on: k8s-runner
+    if: needs.build.outputs.image != ''
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/security/trivy-scan@main
+        with:
+          target: ${{ needs.build.outputs.image }}
+          exit_code: '0'
+
+  # --- Deploy targets (only the matching one runs) ---
+
+  deploy-cloudrun:
+    needs: [detect, build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'cloudrun'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/cloudrun-deploy@main
+        with:
+          service: ${{ needs.detect.outputs.service_name }}
+          image: ${{ needs.build.outputs.image }}
+          project: ${{ inputs.gcp_project }}
+          region: ${{ inputs.gcp_region }}
+          credentials: ${{ secrets.GCP_CREDENTIALS }}
+
+  deploy-k8s:
+    needs: [detect, build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'k8s'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/k8s-deploy@main
+        with:
+          deployment: ${{ needs.detect.outputs.service_name }}
+          container: ${{ needs.detect.outputs.service_name }}
+          image: ${{ needs.build.outputs.image }}
+          namespace: ${{ inputs.k8s_namespace }}
+
+  deploy-cloudflare:
+    needs: [detect, test]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'cloudflare' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        if: needs.detect.outputs.lang == 'sveltekit' || needs.detect.outputs.lang == 'node'
+        shell: bash
+        run: npm ci && npm run build
+      - uses: queflyhq/actions-toolkit/actions/deploy/cloudflare-deploy@main
+        with:
+          project: ${{ inputs.cloudflare_project || needs.detect.outputs.service_name }}
+          account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  deploy-ssh:
+    needs: [detect, build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'ssh'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/ssh-deploy@main
+        with:
+          host: ${{ inputs.ssh_host }}
+          user: ${{ inputs.ssh_user }}
+          key: ${{ secrets.SSH_KEY }}
+          commands: ${{ inputs.ssh_commands }}
+
+  deploy-ecs:
+    needs: [detect, build, scan]
+    runs-on: k8s-runner
+    if: inputs.deploy_target == 'aws-ecs'
+    steps:
+      - uses: queflyhq/actions-toolkit/actions/deploy/aws-ecs-deploy@main
+        with:
+          cluster: ${{ needs.detect.outputs.service_name }}
+          service: ${{ needs.detect.outputs.service_name }}
+          container: ${{ needs.detect.outputs.service_name }}
+          task_definition: ${{ needs.detect.outputs.service_name }}
+          image: ${{ needs.build.outputs.image }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

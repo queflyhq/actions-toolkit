@@ -67,6 +67,7 @@ jobs:
           LANG="unknown"
           HAS_DOCKER="false"
           HAS_HELM="false"
+          HAS_TERRAFORM="false"
           SERVICE_NAME=$(basename $GITHUB_REPOSITORY)
 
           # Detect language
@@ -87,6 +88,10 @@ jobs:
             grep -q "next" package.json 2>/dev/null   && LANG="nextjs"
           fi
 
+          # Terraform / Terragrunt
+          [ -f main.tf ] || [ -f terragrunt.hcl ] && LANG="terraform"
+          ([ -f main.tf ] || find . -name "*.tf" -maxdepth 2 | grep -q .) && HAS_TERRAFORM="true"
+
           # Docker / Helm
           [ -f Dockerfile ]       && HAS_DOCKER="true"
           [ -d helm ] || [ -d charts ] || [ -d deploy/helm ] && HAS_HELM="true"
@@ -94,6 +99,7 @@ jobs:
           echo "lang=$LANG" >> $GITHUB_OUTPUT
           echo "has_docker=$HAS_DOCKER" >> $GITHUB_OUTPUT
           echo "has_helm=$HAS_HELM" >> $GITHUB_OUTPUT
+          echo "has_terraform=$HAS_TERRAFORM" >> $GITHUB_OUTPUT
           echo "service_name=$SERVICE_NAME" >> $GITHUB_OUTPUT
 
           echo "### Stack Detection" >> $GITHUB_STEP_SUMMARY

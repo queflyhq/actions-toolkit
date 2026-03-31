@@ -1,0 +1,97 @@
+name: Ansible Deploy
+description: Run Ansible playbooks for any infrastructure — on-prem, cloud, hybrid.
+
+inputs:
+  playbook:
+    description: 'Path to playbook YAML'
+    required: true
+  inventory:
+    description: 'Path to inventory file or comma-separated hosts'
+    required: true
+  extra_vars:
+    description: 'Extra variables (JSON string or key=value)'
+    required: false
+    default: ''
+  vault_password:
+    description: 'Ansible Vault password'
+    required: false
+  ssh_key:
+    description: 'SSH private key for remote hosts'
+    required: false
+  become:
+    description: 'Run with sudo'
+    required: false
+    default: 'false'
+  tags:
+    description: 'Only run tasks with these tags'
+    required: false
+    default: ''
+  limit:
+    description: 'Limit to specific hosts'
+    required: false
+    default: ''
+  verbosity:
+    description: 'Verbosity level (0-4)'
+    required: false
+    default: '0'
+  requirements:
+    description: 'Path to requirements.yml (galaxy roles/collections)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        if ! command -v ansible-playbook >/dev/null 2>&1; then
+          echo "Installing Ansible..."
+          pip install ansible
+        fi
+        ansible --version | head -1
+
+    - name: Install galaxy requirements
+      if: inputs.requirements != ''
+      shell: bash
+      run: ansible-galaxy install -r ${{ inputs.requirements }}
+
+    - name: Setup SSH key
+      if: inputs.ssh_key != ''
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh_key }}" > ~/.ssh/ansible_key
+        chmod 600 ~/.ssh/ansible_key
+        echo "ANSIBLE_PRIVATE_KEY_FILE=~/.ssh/ansible_key" >> $GITHUB_ENV
+
+    - name: Setup vault password
+      if: inputs.vault_password != ''
+      shell: bash
+      run: |
+        echo "${{ inputs.vault_password }}" > /tmp/.vault_pass
+        echo "ANSIBLE_VAULT_PASSWORD_FILE=/tmp/.vault_pass" >> $GITHUB_ENV
+
+    - name: Run playbook
+      shell: bash
+      run: |
+        ARGS="-i ${{ inputs.inventory }}"
+        [ "${{ inputs.become }}" = "true" ] && ARGS="$ARGS --become"
+        [ -n "${{ inputs.extra_vars }}" ] && ARGS="$ARGS --extra-vars '${{ inputs.extra_vars }}'"
+        [ -n "${{ inputs.tags }}" ] && ARGS="$ARGS --tags ${{ inputs.tags }}"
+        [ -n "${{ inputs.limit }}" ] && ARGS="$ARGS --limit ${{ inputs.limit }}"
+
+        V="${{ inputs.verbosity }}"
+        [ "$V" -gt 0 ] 2>/dev/null && ARGS="$ARGS $(printf -- '-%.0sv' $(seq 1 $V))"
+
+        ansible-playbook ${{ inputs.playbook }} $ARGS
+
+        echo "### Ansible Deploy" >> $GITHUB_STEP_SUMMARY
+        echo "**Playbook:** ${{ inputs.playbook }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Inventory:** ${{ inputs.inventory }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Cleanup
+      if: always()
+      shell: bash
+      run: |
+        rm -f ~/.ssh/ansible_key /tmp/.vault_pass

@@ -1,0 +1,94 @@
+name: AWS Lambda Deploy
+description: Deploy function to AWS Lambda (zip or container image).
+
+inputs:
+  function_name:
+    description: 'Lambda function name'
+    required: true
+  deploy_type:
+    description: 'zip or image'
+    required: false
+    default: 'zip'
+  zip_file:
+    description: 'Path to zip file (for zip deploy)'
+    required: false
+    default: 'function.zip'
+  image:
+    description: 'Container image URI (for image deploy)'
+    required: false
+  handler:
+    description: 'Handler (e.g. index.handler)'
+    required: false
+  runtime:
+    description: 'Runtime (nodejs20.x, python3.12, java21, go1.x, etc.)'
+    required: false
+  region:
+    description: 'AWS region'
+    required: false
+    default: 'us-east-1'
+  env_vars:
+    description: 'Environment variables JSON ({"KEY":"VAL"})'
+    required: false
+    default: ''
+  publish:
+    description: 'Publish new version'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v aws >/dev/null 2>&1 || { echo "::error::AWS CLI is not installed."; exit 1; }
+
+    - name: Deploy (zip)
+      if: inputs.deploy_type == 'zip'
+      shell: bash
+      run: |
+        ARGS="--function-name ${{ inputs.function_name }} --region ${{ inputs.region }}"
+        ARGS="$ARGS --zip-file fileb://${{ inputs.zip_file }}"
+        [ "${{ inputs.publish }}" = "true" ] && ARGS="$ARGS --publish"
+
+        aws lambda update-function-code $ARGS
+
+        [ -n "${{ inputs.handler }}" ] && aws lambda update-function-configuration \
+          --function-name ${{ inputs.function_name }} \
+          --handler ${{ inputs.handler }} \
+          --runtime ${{ inputs.runtime }} \
+          --region ${{ inputs.region }}
+
+        echo "### Lambda Deploy (zip)" >> $GITHUB_STEP_SUMMARY
+        echo "**Function:** ${{ inputs.function_name }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Deploy (image)
+      if: inputs.deploy_type == 'image'
+      shell: bash
+      run: |
+        aws lambda update-function-code \
+          --function-name ${{ inputs.function_name }} \
+          --image-uri ${{ inputs.image }} \
+          --region ${{ inputs.region }} \
+          $( [ "${{ inputs.publish }}" = "true" ] && echo "--publish" )
+
+        echo "### Lambda Deploy (image)" >> $GITHUB_STEP_SUMMARY
+        echo "**Function:** ${{ inputs.function_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** \`${{ inputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Update env vars
+      if: inputs.env_vars != ''
+      shell: bash
+      run: |
+        aws lambda update-function-configuration \
+          --function-name ${{ inputs.function_name }} \
+          --environment "Variables=${{ inputs.env_vars }}" \
+          --region ${{ inputs.region }}
+
+    - name: Wait for update
+      shell: bash
+      run: |
+        aws lambda wait function-updated \
+          --function-name ${{ inputs.function_name }} \
+          --region ${{ inputs.region }}
+        echo "**Status:** Active" >> $GITHUB_STEP_SUMMARY

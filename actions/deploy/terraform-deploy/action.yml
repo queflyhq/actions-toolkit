@@ -1,0 +1,166 @@
+name: Terraform Deploy
+description: Plan and apply Terraform or Terragrunt configurations.
+
+inputs:
+  working_directory:
+    description: 'Directory containing .tf files'
+    required: false
+    default: '.'
+  command:
+    description: 'terraform or terragrunt'
+    required: false
+    default: 'auto'
+  action:
+    description: 'plan, apply, or destroy'
+    required: false
+    default: 'apply'
+  auto_approve:
+    description: 'Auto approve apply/destroy'
+    required: false
+    default: 'true'
+  var_file:
+    description: 'Path to .tfvars file'
+    required: false
+    default: ''
+  backend_config:
+    description: 'Backend config (key=value,key=value)'
+    required: false
+    default: ''
+  workspace:
+    description: 'Terraform workspace'
+    required: false
+    default: ''
+  aws_access_key_id:
+    description: 'AWS access key (for AWS provider/backend)'
+    required: false
+  aws_secret_access_key:
+    description: 'AWS secret key'
+    required: false
+  aws_region:
+    description: 'AWS region'
+    required: false
+    default: 'us-east-1'
+  gcp_credentials:
+    description: 'GCP service account key JSON'
+    required: false
+  azure_credentials:
+    description: 'Azure service principal JSON'
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      shell: bash
+      run: |
+        command -v terraform >/dev/null 2>&1 || { echo "::error::Terraform is not installed."; exit 1; }
+        echo "Terraform $(terraform --version | head -1)"
+        if [ -f "${{ inputs.working_directory }}/terragrunt.hcl" ]; then
+          command -v terragrunt >/dev/null 2>&1 || { echo "::error::Terragrunt is not installed."; exit 1; }
+          echo "Terragrunt $(terragrunt --version | head -1)"
+        fi
+
+    - name: Configure cloud credentials
+      shell: bash
+      run: |
+        # AWS
+        if [ -n "${{ inputs.aws_access_key_id }}" ]; then
+          export AWS_ACCESS_KEY_ID="${{ inputs.aws_access_key_id }}"
+          export AWS_SECRET_ACCESS_KEY="${{ inputs.aws_secret_access_key }}"
+          export AWS_DEFAULT_REGION="${{ inputs.aws_region }}"
+          echo "AWS_ACCESS_KEY_ID=${{ inputs.aws_access_key_id }}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{ inputs.aws_secret_access_key }}" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=${{ inputs.aws_region }}" >> $GITHUB_ENV
+        fi
+
+        # GCP
+        if [ -n "${{ inputs.gcp_credentials }}" ]; then
+          echo '${{ inputs.gcp_credentials }}' > /tmp/gcp-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+        fi
+
+        # Azure
+        if [ -n "${{ inputs.azure_credentials }}" ]; then
+          echo '${{ inputs.azure_credentials }}' | jq -r 'to_entries[] | "ARM_\(.key | ascii_upcase)=\(.value)"' >> $GITHUB_ENV
+        fi
+
+    - name: Detect tool
+      id: tool
+      shell: bash
+      run: |
+        CMD="${{ inputs.command }}"
+        if [ "$CMD" = "auto" ]; then
+          if [ -f "${{ inputs.working_directory }}/terragrunt.hcl" ]; then
+            CMD="terragrunt"
+          else
+            CMD="terraform"
+          fi
+        fi
+        echo "cmd=$CMD" >> $GITHUB_OUTPUT
+
+    - name: Init
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        CMD="${{ steps.tool.outputs.cmd }}"
+        INIT_ARGS=""
+
+        # Backend config
+        if [ -n "${{ inputs.backend_config }}" ]; then
+          IFS=',' read -ra CONFIGS <<< "${{ inputs.backend_config }}"
+          for cfg in "${CONFIGS[@]}"; do
+            INIT_ARGS="$INIT_ARGS -backend-config=$cfg"
+          done
+        fi
+
+        $CMD init $INIT_ARGS
+
+    - name: Select workspace
+      if: inputs.workspace != ''
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        CMD="${{ steps.tool.outputs.cmd }}"
+        $CMD workspace select ${{ inputs.workspace }} 2>/dev/null || $CMD workspace new ${{ inputs.workspace }}
+
+    - name: Plan
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        CMD="${{ steps.tool.outputs.cmd }}"
+        PLAN_ARGS=""
+        [ -n "${{ inputs.var_file }}" ] && PLAN_ARGS="-var-file=${{ inputs.var_file }}"
+
+        $CMD plan $PLAN_ARGS -out=tfplan
+
+        echo "### Terraform Plan" >> $GITHUB_STEP_SUMMARY
+        $CMD show -no-color tfplan 2>/dev/null | head -50 >> $GITHUB_STEP_SUMMARY || true
+
+    - name: Apply
+      if: inputs.action == 'apply'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        CMD="${{ steps.tool.outputs.cmd }}"
+        APPROVE=""
+        [ "${{ inputs.auto_approve }}" = "true" ] && APPROVE="-auto-approve"
+        $CMD apply $APPROVE tfplan
+        echo "**Status:** Applied" >> $GITHUB_STEP_SUMMARY
+
+    - name: Destroy
+      if: inputs.action == 'destroy'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        CMD="${{ steps.tool.outputs.cmd }}"
+        APPROVE=""
+        [ "${{ inputs.auto_approve }}" = "true" ] && APPROVE="-auto-approve"
+        PLAN_ARGS=""
+        [ -n "${{ inputs.var_file }}" ] && PLAN_ARGS="-var-file=${{ inputs.var_file }}"
+        $CMD destroy $APPROVE $PLAN_ARGS
+        echo "**Status:** Destroyed" >> $GITHUB_STEP_SUMMARY
+
+    - name: Cleanup
+      if: always()
+      shell: bash
+      run: rm -f /tmp/gcp-key.json

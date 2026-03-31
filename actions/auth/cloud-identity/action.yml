@@ -1,0 +1,106 @@
+name: Cloud Identity
+description: |
+  Authenticate to cloud providers using workload identity (no static keys).
+  Supports GCP Workload Identity Federation, AWS OIDC, Azure Federated Credentials.
+
+inputs:
+  provider:
+    description: 'gcp, aws, or azure'
+    required: true
+  gcp_workload_identity_provider:
+    description: 'GCP WIF provider (projects/PROJECT/locations/global/workloadIdentityPools/POOL/providers/PROVIDER)'
+    required: false
+  gcp_service_account:
+    description: 'GCP service account email'
+    required: false
+  aws_role_arn:
+    description: 'AWS IAM role ARN to assume via OIDC'
+    required: false
+  aws_region:
+    description: 'AWS region'
+    required: false
+    default: 'us-east-1'
+  azure_client_id:
+    description: 'Azure app client ID'
+    required: false
+  azure_tenant_id:
+    description: 'Azure tenant ID'
+    required: false
+  azure_subscription_id:
+    description: 'Azure subscription ID'
+    required: false
+
+runs:
+  using: composite
+  steps:
+    # GCP Workload Identity Federation
+    - name: GCP Workload Identity
+      if: inputs.provider == 'gcp'
+      shell: bash
+      run: |
+        command -v gcloud >/dev/null 2>&1 || { echo "::error::gcloud not installed."; exit 1; }
+
+        # Get OIDC token from GitHub Actions
+        OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://iam.googleapis.com/${{ inputs.gcp_workload_identity_provider }}" | jq -r .value)
+
+        # Exchange for GCP access token
+        gcloud auth login --cred-file=<(cat <<CRED
+        {
+          "type": "external_account",
+          "audience": "//iam.googleapis.com/${{ inputs.gcp_workload_identity_provider }}",
+          "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+          "token_url": "https://sts.googleapis.com/v1/token",
+          "credential_source": {"file": "/dev/stdin"},
+          "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${{ inputs.gcp_service_account }}:generateAccessToken"
+        }
+        CRED
+        ) --quiet 2>/dev/null || true
+
+        # Fallback: write cred file for SDK use
+        echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-wif-cred.json" >> $GITHUB_ENV
+        echo "### GCP Workload Identity" >> $GITHUB_STEP_SUMMARY
+        echo "Service Account: \`${{ inputs.gcp_service_account }}\`" >> $GITHUB_STEP_SUMMARY
+
+    # AWS OIDC
+    - name: AWS OIDC
+      if: inputs.provider == 'aws'
+      shell: bash
+      run: |
+        command -v aws >/dev/null 2>&1 || { echo "::error::AWS CLI not installed."; exit 1; }
+
+        OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+
+        CREDS=$(aws sts assume-role-with-web-identity \
+          --role-arn "${{ inputs.aws_role_arn }}" \
+          --role-session-name "github-actions" \
+          --web-identity-token "$OIDC_TOKEN" \
+          --region "${{ inputs.aws_region }}" \
+          --output json)
+
+        echo "AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)" >> $GITHUB_ENV
+        echo "AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)" >> $GITHUB_ENV
+        echo "AWS_DEFAULT_REGION=${{ inputs.aws_region }}" >> $GITHUB_ENV
+
+        echo "### AWS OIDC" >> $GITHUB_STEP_SUMMARY
+        echo "Role: \`${{ inputs.aws_role_arn }}\`" >> $GITHUB_STEP_SUMMARY
+
+    # Azure Federated Credentials
+    - name: Azure Federated
+      if: inputs.provider == 'azure'
+      shell: bash
+      run: |
+        command -v az >/dev/null 2>&1 || { echo "::error::Azure CLI not installed."; exit 1; }
+
+        az login --service-principal \
+          --tenant "${{ inputs.azure_tenant_id }}" \
+          --username "${{ inputs.azure_client_id }}" \
+          --federated-token "$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r .value)"
+
+        az account set --subscription "${{ inputs.azure_subscription_id }}"
+
+        echo "### Azure Federated" >> $GITHUB_STEP_SUMMARY
+        echo "Tenant: \`${{ inputs.azure_tenant_id }}\`" >> $GITHUB_STEP_SUMMARY

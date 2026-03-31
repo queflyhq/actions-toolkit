@@ -58,7 +58,7 @@ on:
 
 jobs:
   test:
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     steps:
       - uses: actions/checkout@v4
       - uses: queflyhq/actions-toolkit/actions/test/go-test@main
@@ -67,7 +67,7 @@ jobs:
 
   build:
     needs: test
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: github.ref == 'refs/heads/main'
     outputs:
       image: ${{ steps.build.outputs.image }}
@@ -85,7 +85,7 @@ jobs:
 
   scan:
     needs: build
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: queflyhq/actions-toolkit/actions/security/trivy-scan@main
@@ -95,7 +95,7 @@ jobs:
 
   deploy-cloudrun:
     needs: [build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'cloudrun'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/cloudrun-deploy@main
@@ -108,7 +108,7 @@ jobs:
 
   deploy-k8s:
     needs: [build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'k8s'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/k8s-deploy@main
@@ -120,7 +120,7 @@ jobs:
 
   deploy-ssh:
     needs: [build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'ssh'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/ssh-deploy@main

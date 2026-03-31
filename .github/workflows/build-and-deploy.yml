@@ -90,7 +90,7 @@ on:
       runs_on:
         required: false
         type: string
-        default: 'k8s-runner'
+        default: 'qf-k8s-runner'
 
 jobs:
   # ═══════════════════════════════════════

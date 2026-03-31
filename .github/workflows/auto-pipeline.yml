@@ -51,7 +51,7 @@ on:
 
 jobs:
   detect:
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     outputs:
       lang: ${{ steps.detect.outputs.lang }}
       has_docker: ${{ steps.detect.outputs.has_docker }}
@@ -112,7 +112,7 @@ jobs:
 
   test:
     needs: detect
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     steps:
       - uses: actions/checkout@v4
 
@@ -175,7 +175,7 @@ jobs:
 
   version:
     needs: [detect, test]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: github.ref == 'refs/heads/main'
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -190,7 +190,7 @@ jobs:
 
   build:
     needs: [detect, version]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: needs.detect.outputs.has_docker == 'true' && github.ref == 'refs/heads/main'
     outputs:
       image: ${{ steps.docker.outputs.image }}
@@ -207,7 +207,7 @@ jobs:
 
   scan:
     needs: [build]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: needs.build.outputs.image != ''
     steps:
       - uses: queflyhq/actions-toolkit/actions/security/trivy-scan@main
@@ -219,7 +219,7 @@ jobs:
 
   deploy-cloudrun:
     needs: [detect, build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'cloudrun'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/cloudrun-deploy@main
@@ -232,7 +232,7 @@ jobs:
 
   deploy-k8s:
     needs: [detect, build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'k8s'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/k8s-deploy@main
@@ -244,7 +244,7 @@ jobs:
 
   deploy-cloudflare:
     needs: [detect, test]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'cloudflare' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
@@ -260,7 +260,7 @@ jobs:
 
   deploy-ssh:
     needs: [detect, build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'ssh'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/ssh-deploy@main
@@ -272,7 +272,7 @@ jobs:
 
   deploy-ecs:
     needs: [detect, build, scan]
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     if: inputs.deploy_target == 'aws-ecs'
     steps:
       - uses: queflyhq/actions-toolkit/actions/deploy/aws-ecs-deploy@main

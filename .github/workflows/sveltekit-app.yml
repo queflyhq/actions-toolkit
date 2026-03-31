@@ -33,7 +33,7 @@ on:
 
 jobs:
   build-deploy:
-    runs-on: k8s-runner
+    runs-on: qf-k8s-runner
     steps:
       - uses: actions/checkout@v4
 

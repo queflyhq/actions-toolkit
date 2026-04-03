@@ -31,7 +31,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: qf-k8s-runner
     permissions:
       contents: read
       id-token: write       # for attestation

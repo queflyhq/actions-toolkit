@@ -18,16 +18,29 @@ on:
         required: false
         type: string
         default: 'e2e-test'
-      allure_report:
-        description: 'Generate and publish Allure report'
-        required: false
-        type: boolean
-        default: true
+    outputs:
+      total:
+        description: 'Total tests'
+        value: ${{ jobs.e2e.outputs.total }}
+      passed:
+        description: 'Passed tests'
+        value: ${{ jobs.e2e.outputs.passed }}
+      failed:
+        description: 'Failed tests'
+        value: ${{ jobs.e2e.outputs.failed }}
+      skipped:
+        description: 'Skipped tests'
+        value: ${{ jobs.e2e.outputs.skipped }}
 
 jobs:
   e2e:
     runs-on: qf-k8s-runner
     timeout-minutes: 30
+    outputs:
+      total: ${{ steps.e2e.outputs.total }}
+      passed: ${{ steps.e2e.outputs.passed }}
+      failed: ${{ steps.e2e.outputs.failed }}
+      skipped: ${{ steps.e2e.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,56 +50,3 @@ jobs:
           suite: ${{ inputs.suite }}
           environment: ${{ inputs.environment }}
           tenant_slug: ${{ inputs.tenant_slug }}
-
-  allure:
-    needs: e2e
-    runs-on: qf-k8s-runner
-    if: always() && inputs.allure_report
-    permissions:
-      pages: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Allure results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-results-${{ inputs.suite }}
-          path: allure-results
-
-      - name: Install Allure
-        shell: bash
-        run: |
-          if ! command -v allure >/dev/null 2>&1; then
-            command -v catalyst >/dev/null 2>&1 && catalyst install allure || {
-              curl -sL https://github.com/allure-framework/allure2/releases/download/2.29.0/allure-2.29.0.tgz | tar xz -C /opt
-              ln -sf /opt/allure-2.29.0/bin/allure /usr/local/bin/allure
-            }
-          fi
-
-      - name: Download history
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-history
-          path: allure-history
-        continue-on-error: true
-
-      - name: Generate report
-        shell: bash
-        run: |
-          cp -r allure-history/history allure-results/history 2>/dev/null || true
-          allure generate allure-results -o allure-report --clean
-
-      - name: Upload history
-        uses: actions/upload-artifact@v4
-        with:
-          name: allure-history
-          path: allure-report/history
-          retention-days: 90
-
-      - name: Deploy to Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: allure-report
-          destination_dir: allure

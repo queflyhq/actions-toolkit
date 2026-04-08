@@ -43,6 +43,11 @@ jobs:
           command -v node >/dev/null 2>&1 || catalyst install node
           echo "Node $(node --version)"
 
+      - name: Configure GitHub Packages
+        if: hashFiles('.npmrc') != ''
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
+
       - name: Install
         run: npm ci
 

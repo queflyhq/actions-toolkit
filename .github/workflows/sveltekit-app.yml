@@ -49,7 +49,7 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
 
       - name: Install
-        run: npm ci
+        run: npm install
 
       - name: Build
         run: ${{ inputs.build_command }}

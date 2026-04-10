@@ -51,7 +51,10 @@ jobs:
       - name: Install
         run: |
           rm -rf node_modules package-lock.json
-          npm install
+          npm install --loglevel verbose 2>&1 | tail -50
+          echo "=== @queflyhq check ==="
+          ls node_modules/@queflyhq/ 2>/dev/null || echo "NOT INSTALLED"
+          cat .npmrc
 
       - name: Build
         run: ${{ inputs.build_command }}

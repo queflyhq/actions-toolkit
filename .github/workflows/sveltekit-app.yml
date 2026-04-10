@@ -44,8 +44,8 @@ jobs:
           echo "Node $(node --version)"
 
       - name: Configure GitHub Packages
-        if: hashFiles('.npmrc') != ''
         run: |
+          echo "@queflyhq:registry=https://npm.pkg.github.com" > .npmrc
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
 
       - name: Install

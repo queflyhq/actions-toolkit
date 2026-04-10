@@ -49,12 +49,7 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
 
       - name: Install
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install --loglevel verbose 2>&1 | tail -50
-          echo "=== @queflyhq check ==="
-          ls node_modules/@queflyhq/ 2>/dev/null || echo "NOT INSTALLED"
-          cat .npmrc
+        run: npm install
 
       - name: Build
         run: ${{ inputs.build_command }}

@@ -49,7 +49,22 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
 
       - name: Install
-        run: npm install
+        shell: bash
+        # esbuild's postinstall occasionally hits ETXTBSY on overlayfs
+        # (the binary it just wrote is still being exec'd when npm
+        # re-reads it). One retry after a clean reinstall clears it.
+        run: |
+          attempt() {
+            if [ -f package-lock.json ]; then npm ci --no-audit --no-fund
+            else npm install --no-audit --no-fund
+            fi
+          }
+          if ! attempt; then
+            echo "first install failed — wiping node_modules and retrying"
+            rm -rf node_modules
+            sleep 3
+            attempt
+          fi
 
       - name: Build
         run: ${{ inputs.build_command }}

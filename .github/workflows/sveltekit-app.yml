@@ -50,12 +50,18 @@ jobs:
 
       - name: Install
         shell: bash
-        # Always `npm install` — our downstream UI repos push package.json
-        # changes without regenerating package-lock.json, and `npm ci`
-        # hard-fails on that drift with EUSAGE. Also retry once to clear
-        # esbuild's known ETXTBSY flake on overlayfs postinstall.
+        # --include=optional is load-bearing: Cloudflare's adapter pulls
+        # @cloudflare/workerd-<platform>-<arch> as an optional dep, and
+        # npm silently skips it on some runner setups → build blows up
+        # with "package … could not be found, and is needed by workerd".
+        # Forcing optional inclusion fixes it.
+        #
+        # npm install (not ci) because downstream UI repos push
+        # package.json bumps without regenerating package-lock.json —
+        # ci would EUSAGE on that drift. Plus one retry to clear the
+        # esbuild postinstall ETXTBSY race on overlayfs.
         run: |
-          attempt() { npm install --no-audit --no-fund; }
+          attempt() { npm install --no-audit --no-fund --include=optional; }
           if ! attempt; then
             echo "first install failed — wiping node_modules and retrying"
             rm -rf node_modules

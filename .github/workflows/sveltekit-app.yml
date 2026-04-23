@@ -50,15 +50,12 @@ jobs:
 
       - name: Install
         shell: bash
-        # esbuild's postinstall occasionally hits ETXTBSY on overlayfs
-        # (the binary it just wrote is still being exec'd when npm
-        # re-reads it). One retry after a clean reinstall clears it.
+        # Always `npm install` — our downstream UI repos push package.json
+        # changes without regenerating package-lock.json, and `npm ci`
+        # hard-fails on that drift with EUSAGE. Also retry once to clear
+        # esbuild's known ETXTBSY flake on overlayfs postinstall.
         run: |
-          attempt() {
-            if [ -f package-lock.json ]; then npm ci --no-audit --no-fund
-            else npm install --no-audit --no-fund
-            fi
-          }
+          attempt() { npm install --no-audit --no-fund; }
           if ! attempt; then
             echo "first install failed — wiping node_modules and retrying"
             rm -rf node_modules

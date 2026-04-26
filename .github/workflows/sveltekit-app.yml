@@ -56,8 +56,43 @@ jobs:
             echo "fetch-timeout=300000"
           } > .npmrc
 
+      - name: Diagnose registry connectivity
+        shell: bash
+        # Three independent probes so the next failure log tells us
+        # which layer is broken instead of guessing:
+        #   1. DNS resolution (works → not a name issue).
+        #   2. curl HEAD with TLS verbose (works → libcurl/OpenSSL
+        #      can talk to the registry; if Node still fails it's a
+        #      Node-TLS or HTTP/2 problem, not the network).
+        #   3. node https.get (works → Node-TLS itself is fine; if
+        #      this fails but curl works, suspect Node version
+        #      bug or HTTP/2 streaming).
+        # All three are timeboxed; output never blocks the run.
+        run: |
+          set +e
+          echo "--- DNS ---"
+          getent hosts registry.npmjs.org || nslookup registry.npmjs.org
+          echo "--- curl ---"
+          curl --max-time 30 -sSI https://registry.npmjs.org/ -o /tmp/curl-headers || echo "curl failed: $?"
+          head -3 /tmp/curl-headers 2>/dev/null
+          echo "--- node https ---"
+          timeout 30 node -e "
+            require('https').get('https://registry.npmjs.org/', r => {
+              console.log('node:', r.statusCode, r.headers['content-type']);
+              r.resume();
+            }).on('error', e => console.log('node err:', e.code, e.message));" || echo "node test exit: $?"
+          true
+
       - name: Install
         shell: bash
+        env:
+          # Force Node-side TLS to 1.2 only. Node 20.20.x has
+          # documented intermittent failures on TLS 1.3 streaming
+          # GCM (ossl_gcm_stream_update cipher operation failed)
+          # against Cloudflare-fronted endpoints, which is what
+          # registry.npmjs.org sits behind. TLS 1.2 uses non-
+          # streaming GCM and avoids the bug entirely.
+          NODE_OPTIONS: "--tls-max-v1.2 --use-openssl-ca"
         # Two distinct failure modes on the homelab K8s runner that
         # this step has to survive:
         #

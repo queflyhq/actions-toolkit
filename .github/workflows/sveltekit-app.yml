@@ -43,66 +43,31 @@ jobs:
           command -v node >/dev/null 2>&1 || catalyst install node
           echo "Node $(node --version)"
 
-      - name: Configure GitHub Packages + npm resilience
+      - name: Configure GitHub Packages
         run: |
-          # Auth + registry. .npmrc settings below also tune npm for
-          # the homelab runner's flaky TLS path to registry.npmjs.org —
-          # we've seen ERR_SSL_CIPHER_OPERATION_FAILED mid-stream on
-          # large tarballs (workerd + chrome-headless), almost always
-          # retryable. Bumping retries + timeouts lets npm recover
-          # without the workflow falling over.
-          {
-            echo "@queflyhq:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}"
-            echo "fetch-retries=5"
-            echo "fetch-retry-mintimeout=10000"
-            echo "fetch-retry-maxtimeout=60000"
-            echo "fetch-timeout=600000"
-            # Single socket per origin avoids HTTP/2 multiplexing bugs
-            # that surface as random GCM cipher failures on this runner.
-            echo "maxsockets=1"
-          } > .npmrc
+          echo "@queflyhq:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GIT_BOT_TOKEN }}" >> .npmrc
 
       - name: Install
         shell: bash
-        # Two layered concerns:
-        #   1. Transient network/TLS failures on the homelab runner —
-        #      handled by an outer retry loop with exponential backoff.
-        #      Wipe node_modules between attempts (and the lockfile on
-        #      the last attempt) so npm doesn't get wedged thinking the
-        #      tree is satisfied when it isn't.
-        #   2. Optional platform binaries (workerd-<os>-<arch>) that
-        #      npm silently skips even with --include=optional. The
-        #      app-side prebuild script (scripts/ensure-workerd.mjs)
-        #      installs the missing binary with --no-package-lock
-        #      --force at build time. This step only needs to make
-        #      sure `npm install` itself completes successfully.
+        # --include=optional is load-bearing: Cloudflare's adapter pulls
+        # @cloudflare/workerd-<platform>-<arch> as an optional dep, and
+        # npm silently skips it on some runner setups → build blows up
+        # with "package … could not be found, and is needed by workerd".
+        # Forcing optional inclusion fixes it.
+        #
+        # npm install (not ci) because downstream UI repos push
+        # package.json bumps without regenerating package-lock.json —
+        # ci would EUSAGE on that drift. Plus one retry to clear the
+        # esbuild postinstall ETXTBSY race on overlayfs.
         run: |
-          set -e
-          MAX_ATTEMPTS=4
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "::group::npm install attempt $i/$MAX_ATTEMPTS"
-            if npm install --no-audit --no-fund --include=optional; then
-              echo "::endgroup::"
-              echo "install succeeded on attempt $i"
-              exit 0
-            fi
-            echo "::endgroup::"
-            if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
-              echo "all $MAX_ATTEMPTS attempts failed"
-              exit 1
-            fi
-            backoff=$((i * 10))
-            echo "attempt $i failed — wiping node_modules, sleeping ${backoff}s"
+          attempt() { npm install --no-audit --no-fund --include=optional; }
+          if ! attempt; then
+            echo "first install failed — wiping node_modules and retrying"
             rm -rf node_modules
-            # On the final retry, also drop the lockfile — sometimes a
-            # stale resolved-tree state is what's tripping npm up.
-            if [ "$i" -eq $((MAX_ATTEMPTS - 1)) ]; then
-              echo "last retry: also clearing package-lock.json"
-              rm -f package-lock.json
-            fi
-            sleep $backoff
-          done
+            sleep 3
+            attempt
+          fi
 
       - name: Build
         run: ${{ inputs.build_command }}

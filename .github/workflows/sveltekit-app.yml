@@ -58,84 +58,38 @@ jobs:
 
       - name: Install
         shell: bash
-        # Two distinct failure modes on the homelab K8s runner that
-        # this step has to survive:
+        # Two retries, errors visible (no ::group:: nesting). If install
+        # fails repeatedly the actual npm error must be readable in the
+        # job log so we can act on it. Wipe node_modules between
+        # attempts; on the final retry also drop the lockfile in case
+        # of stale resolved-tree state.
         #
-        #   1. Transient TLS hiccup against registry.npmjs.org —
-        #      ERR_SSL_CIPHER_OPERATION_FAILED mid-stream on a large
-        #      tarball. Almost always retryable.
-        #
-        #   2. ETXTBSY from esbuild's postinstall — a known overlayfs
-        #      race: postinstall scripts try to `execFileSync` the
-        #      esbuild binary the instant the tarball finishes
-        #      extracting, while the kernel still holds the inode
-        #      open for writing. Manifests as
-        #         spawnSync .../esbuild/bin/esbuild ETXTBSY
-        #      Splitting "extract" from "run scripts" by passing
-        #      --ignore-scripts on the install, then doing
-        #      `npm rebuild` after a brief settle, avoids the race —
-        #      by rebuild time every file is closed.
-        #
-        # Strategy:
-        #   - Up to 3 install attempts with --ignore-scripts. If any
-        #     succeeds we move on to rebuild. Wipe node_modules
-        #     between attempts; drop the lockfile on the final retry
-        #     in case of stale resolved-tree state.
-        #   - Then `npm rebuild` to run all postinstalls. One retry
-        #     in case anything still raced.
-        #
-        # Errors print directly — no ::group:: nesting that hides
-        # them. App-side prebuild scripts handle the workerd-
-        # <os>-<arch> optional-deps gap; this step only owns
-        # `npm install completes`.
+        # Cross-platform optional deps (workerd-<os>-<arch>) that npm
+        # sometimes drops are handled by app-side prebuild scripts —
+        # this step only guarantees `npm install` itself completes.
         run: |
           set +e
-          MAX_INSTALL=3
-          installed=0
-          for i in $(seq 1 $MAX_INSTALL); do
-            echo "--- npm install (no scripts) attempt $i/$MAX_INSTALL ---"
-            npm install --no-audit --no-fund --include=optional --ignore-scripts
+          MAX_ATTEMPTS=3
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "--- npm install attempt $i/$MAX_ATTEMPTS ---"
+            npm install --no-audit --no-fund --include=optional
             rc=$?
             if [ "$rc" -eq 0 ]; then
-              installed=1
               echo "install succeeded on attempt $i"
-              break
+              exit 0
             fi
-            echo "install attempt $i exited $rc"
-            if [ "$i" -lt "$MAX_INSTALL" ]; then
+            echo "attempt $i exited $rc"
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
               rm -rf node_modules
-              if [ "$i" -eq $((MAX_INSTALL - 1)) ]; then
-                echo "final install retry: also clearing package-lock.json"
+              if [ "$i" -eq $((MAX_ATTEMPTS - 1)) ]; then
+                echo "final retry: also clearing package-lock.json"
                 rm -f package-lock.json
               fi
               sleep $((i * 10))
             fi
           done
-          if [ "$installed" -ne 1 ]; then
-            echo "all $MAX_INSTALL install attempts failed"
-            exit 1
-          fi
-
-          # Settle filesystem before running postinstalls — gives the
-          # kernel a moment to close any inodes esbuild + friends
-          # might still be holding from the extract phase.
-          sync || true
-          sleep 2
-
-          echo "--- npm rebuild (run postinstalls) ---"
-          npm rebuild
-          rc=$?
-          if [ "$rc" -eq 0 ]; then
-            exit 0
-          fi
-          echo "rebuild attempt 1 exited $rc — sleeping 5s and retrying once"
-          sleep 5
-          npm rebuild
-          rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "rebuild failed twice"
-            exit 1
-          fi
+          echo "all $MAX_ATTEMPTS attempts failed"
+          exit 1
 
       - name: Build
         run: ${{ inputs.build_command }}

@@ -122,42 +122,6 @@ jobs:
           sync || true
           sleep 2
 
-          # Pre-plant @cloudflare/workerd-<os>-<arch> if workerd is in
-          # the dep tree. Without this, workerd's postinstall fires a
-          # fresh `npm install` subprocess to fetch the platform
-          # binary, and that subprocess hits the runner's flaky Node-
-          # TLS stack (ERR_SSL_CIPHER_OPERATION_FAILED) — the parent
-          # npm install retried fine, but workerd's child npm doesn't
-          # share its retry budget.
-          #
-          # curl uses libcurl/OpenSSL via a different code path than
-          # Node's TLS, has --retry built in, and is the standard
-          # "registry is up but Node is misbehaving" workaround.
-          if [ -f node_modules/workerd/package.json ]; then
-            os="$(node -p 'process.platform')"
-            arch="$(node -p 'process.arch === \"x64\" ? \"64\" : process.arch')"
-            pkg="@cloudflare/workerd-${os}-${arch}"
-            ver="$(node -p "require('./node_modules/workerd/package.json').optionalDependencies['$pkg'] || ''")"
-            if [ -n "$ver" ] && [ ! -d "node_modules/$pkg" ]; then
-              echo "--- pre-planting $pkg@$ver via curl ---"
-              tmp="$(mktemp -d)"
-              tarball="$tmp/workerd.tgz"
-              tarball_url="https://registry.npmjs.org/${pkg}/-/${pkg##*/}-${ver}.tgz"
-              curl --silent --show-error --fail \
-                   --retry 6 --retry-delay 5 --retry-all-errors \
-                   --max-time 120 \
-                   -o "$tarball" "$tarball_url" || {
-                echo "curl download failed for $tarball_url"
-                exit 1
-              }
-              mkdir -p "node_modules/$pkg"
-              tar -xzf "$tarball" -C "node_modules/$pkg" --strip-components=1
-              chmod +x "node_modules/$pkg/bin/workerd" 2>/dev/null || true
-              rm -rf "$tmp"
-              echo "$pkg planted"
-            fi
-          fi
-
           echo "--- npm rebuild (run postinstalls) ---"
           npm rebuild
           rc=$?

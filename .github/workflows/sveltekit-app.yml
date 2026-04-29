@@ -33,15 +33,20 @@ on:
 
 jobs:
   build-deploy:
-    runs-on: qf-k8s-runner
+    # ubuntu-latest (GitHub-hosted) for now. The qf-k8s-runner homelab
+    # runner has been failing every install with
+    # ERR_SSL_CIPHER_OPERATION_FAILED — AES-GCM tag check on TLS frames
+    # is corrupted mid-stream, almost certainly the eBPF agent on the
+    # host clamping packets in a way that breaks AEAD. Revert to
+    # `qf-k8s-runner` once the agent is stabilized.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Node.js
-        shell: bash
-        run: |
-          command -v node >/dev/null 2>&1 || catalyst install node
-          echo "Node $(node --version)"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Configure GitHub Packages
         run: |
@@ -58,46 +63,15 @@ jobs:
         #
         # npm install (not ci) because downstream UI repos push
         # package.json bumps without regenerating package-lock.json —
-        # ci would EUSAGE on that drift.
-        #
-        # Retry handles three distinct failure modes seen on qf-k8s-runner:
-        #   1. esbuild postinstall ETXTBSY race on overlayfs
-        #   2. ERR_SSL_CIPHER_OPERATION_FAILED on first attempt
-        #      (stale TLS GCM cache from previous job on the same pod)
-        #   3. ERR_SSL_CIPHER_OPERATION_FAILED on every attempt
-        #      (IPv6 path to GitHub Packages flapping; AAAA records
-        #      resolve but TCP+TLS frames get corrupted mid-stream).
-        #      Forcing IPv4 (NODE_OPTIONS=--dns-result-order=ipv4first)
-        #      sidesteps the bad path entirely. Combined with
-        #      fetch-retries inside npm so individual package fetches
-        #      can recover without restarting the whole install.
-        env:
-          # IPv4-first works around flaky AAAA paths to npm registries
-          # from the homelab K8s runner. The eBPF agent on the host
-          # occasionally clamps egress MTU on v6 in ways that break
-          # AES-GCM tag verification mid-frame.
-          NODE_OPTIONS: '--dns-result-order=ipv4first'
-          # Per-package fetch retries inside npm itself.
-          npm_config_fetch_retries: '5'
-          npm_config_fetch_retry_factor: '2'
-          npm_config_fetch_retry_mintimeout: '10000'
-          npm_config_fetch_retry_maxtimeout: '60000'
+        # ci would EUSAGE on that drift. Retry covers the esbuild
+        # postinstall ETXTBSY race that occasionally hits on overlayfs.
         run: |
-          attempt() {
-            npm install --no-audit --no-fund --no-progress --include=optional --prefer-online
-          }
+          attempt() { npm install --no-audit --no-fund --include=optional; }
           if ! attempt; then
-            echo "first install failed — wiping node_modules + npm cache and retrying"
+            echo "first install failed — wiping node_modules and retrying"
             rm -rf node_modules
-            npm cache clean --force || true
-            sleep 5
-            if ! attempt; then
-              echo "second install failed — final retry with verbose log"
-              rm -rf node_modules
-              npm cache clean --force || true
-              sleep 10
-              npm install --no-audit --no-fund --no-progress --include=optional --prefer-online --verbose
-            fi
+            sleep 3
+            attempt
           fi
 
       - name: Build

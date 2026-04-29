@@ -58,15 +58,31 @@ jobs:
         #
         # npm install (not ci) because downstream UI repos push
         # package.json bumps without regenerating package-lock.json —
-        # ci would EUSAGE on that drift. Plus one retry to clear the
-        # esbuild postinstall ETXTBSY race on overlayfs.
+        # ci would EUSAGE on that drift.
+        #
+        # Retry handles two distinct failure modes seen on qf-k8s-runner:
+        #   1. esbuild postinstall ETXTBSY race on overlayfs
+        #   2. ERR_SSL_CIPHER_OPERATION_FAILED — stale TLS GCM session
+        #      reuse against npm.pkg.github.com / registry.npmjs.org.
+        #      Cache clean + --prefer-online forces a fresh handshake;
+        #      --no-progress keeps the http agent from holding a stale
+        #      keep-alive socket between retries.
         run: |
-          attempt() { npm install --no-audit --no-fund --include=optional; }
+          attempt() {
+            npm install --no-audit --no-fund --no-progress --include=optional --prefer-online
+          }
           if ! attempt; then
-            echo "first install failed — wiping node_modules and retrying"
+            echo "first install failed — wiping node_modules + npm cache and retrying"
             rm -rf node_modules
-            sleep 3
-            attempt
+            npm cache clean --force || true
+            sleep 5
+            if ! attempt; then
+              echo "second install failed — final retry with verbose log"
+              rm -rf node_modules
+              npm cache clean --force || true
+              sleep 10
+              npm install --no-audit --no-fund --no-progress --include=optional --prefer-online --verbose
+            fi
           fi
 
       - name: Build

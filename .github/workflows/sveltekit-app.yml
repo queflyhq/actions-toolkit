@@ -60,13 +60,28 @@ jobs:
         # package.json bumps without regenerating package-lock.json —
         # ci would EUSAGE on that drift.
         #
-        # Retry handles two distinct failure modes seen on qf-k8s-runner:
+        # Retry handles three distinct failure modes seen on qf-k8s-runner:
         #   1. esbuild postinstall ETXTBSY race on overlayfs
-        #   2. ERR_SSL_CIPHER_OPERATION_FAILED — stale TLS GCM session
-        #      reuse against npm.pkg.github.com / registry.npmjs.org.
-        #      Cache clean + --prefer-online forces a fresh handshake;
-        #      --no-progress keeps the http agent from holding a stale
-        #      keep-alive socket between retries.
+        #   2. ERR_SSL_CIPHER_OPERATION_FAILED on first attempt
+        #      (stale TLS GCM cache from previous job on the same pod)
+        #   3. ERR_SSL_CIPHER_OPERATION_FAILED on every attempt
+        #      (IPv6 path to GitHub Packages flapping; AAAA records
+        #      resolve but TCP+TLS frames get corrupted mid-stream).
+        #      Forcing IPv4 (NODE_OPTIONS=--dns-result-order=ipv4first)
+        #      sidesteps the bad path entirely. Combined with
+        #      fetch-retries inside npm so individual package fetches
+        #      can recover without restarting the whole install.
+        env:
+          # IPv4-first works around flaky AAAA paths to npm registries
+          # from the homelab K8s runner. The eBPF agent on the host
+          # occasionally clamps egress MTU on v6 in ways that break
+          # AES-GCM tag verification mid-frame.
+          NODE_OPTIONS: '--dns-result-order=ipv4first'
+          # Per-package fetch retries inside npm itself.
+          npm_config_fetch_retries: '5'
+          npm_config_fetch_retry_factor: '2'
+          npm_config_fetch_retry_mintimeout: '10000'
+          npm_config_fetch_retry_maxtimeout: '60000'
         run: |
           attempt() {
             npm install --no-audit --no-fund --no-progress --include=optional --prefer-online

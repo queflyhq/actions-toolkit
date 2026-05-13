@@ -77,12 +77,27 @@ jobs:
       - name: Build
         run: ${{ inputs.build_command }}
 
+      # Branch → env project mapping. main → <project>, dev → <project>-dev,
+      # qa → <project>-qa. Anything else is a no-op deploy (CI still builds for PR checks).
+      - name: Resolve target Pages project
+        id: target
+        if: inputs.deploy
+        shell: bash
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main) target="${{ inputs.project }}" ;;
+            dev)  target="${{ inputs.project }}-dev" ;;
+            qa)   target="${{ inputs.project }}-qa" ;;
+            *)    target="" ;;
+          esac
+          echo "project=$target" >> "$GITHUB_OUTPUT"
+
       - name: Deploy
-        if: inputs.deploy && github.ref == 'refs/heads/main'
+        if: inputs.deploy && steps.target.outputs.project != ''
         uses: queflyhq/actions-toolkit/actions/deploy/cloudflare-deploy@main
         with:
           type: pages
-          project: ${{ inputs.project }}
+          project: ${{ steps.target.outputs.project }}
           directory: ${{ inputs.output_dir }}
           account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}

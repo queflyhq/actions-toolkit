@@ -1,0 +1,111 @@
+# Verdaccio Helm values for the AuthFI homelab npm mirror.
+#
+# Purpose: insulate CI builds from the public npm registry's flaky
+# TLS path. First fetch of any package goes upstream once; every
+# subsequent build pulls from this in-cluster cache. Removes the
+# Cloudflare/Node-TLS coupling that broke deploy #195+.
+#
+# Install / upgrade (from the homelab K8s box):
+#   helm repo add verdaccio https://charts.verdaccio.org
+#   helm repo update
+#   helm upgrade --install verdaccio verdaccio/verdaccio \
+#     -n verdaccio --create-namespace \
+#     -f deploy/verdaccio/values.yaml
+#
+# Verify:
+#   kubectl -n verdaccio rollout status deploy/verdaccio
+#   kubectl -n verdaccio port-forward svc/verdaccio 4873:4873 &
+#   curl -s http://localhost:4873/-/ping
+#
+# Reach from runner pods (cluster-internal):
+#   http://verdaccio.verdaccio.svc.cluster.local:4873
+
+image:
+  repository: verdaccio/verdaccio
+  tag: "5"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 4873
+
+# 10 GiB on local-path is enough for our entire dep set with room
+# to spare. Bump if multiple node_modules graphs land on the same
+# filesystem later.
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: local-path
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Strict ordering: PVC is RWO, rolling restart would deadlock on
+# the volume. Recreate flips replicas down→up cleanly.
+strategy:
+  type: Recreate
+
+# Verdaccio config. The default chart values include a sensible
+# baseline; we override only what we need:
+# - uplink to npmjs.org with generous timeouts so first-fetch on
+#   slow tarballs doesn't fail the whole build
+# - cache: true on the uplink so repeated requests come from disk
+# - accept all reads (CI doesn't authenticate); publish requires
+#   htpasswd if we ever decide to push internal forks here
+configMap: |
+  storage: /verdaccio/storage
+  web:
+    enable: true
+    title: AuthFI homelab npm mirror
+  auth:
+    htpasswd:
+      file: /verdaccio/storage/htpasswd
+      max_users: -1
+  uplinks:
+    npmjs:
+      url: https://registry.npmjs.org/
+      cache: true
+      max_fails: 5
+      fail_timeout: 30s
+      timeout: 90s
+      agent_options:
+        keepAlive: true
+        maxSockets: 40
+  packages:
+    '@*/*':
+      access: $all
+      publish: $authenticated
+      proxy: npmjs
+    '**':
+      access: $all
+      publish: $authenticated
+      proxy: npmjs
+  server:
+    keepAliveTimeout: 60
+  middlewares:
+    audit:
+      enabled: true
+  log:
+    - {type: stdout, format: pretty, level: warn}
+
+# No ingress for now — the only consumer is the in-cluster GitHub
+# Actions runner. If we ever want devs to hit the mirror from
+# outside the cluster, expose via the existing nginx-gateway or
+# the Cloudflare tunnel.
+ingress:
+  enabled: false
+
+# Probes hit /-/ping which Verdaccio answers cheaply.
+probes:
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
